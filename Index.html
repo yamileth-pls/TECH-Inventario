@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <style>
+    :root{
+      --navy:#132846; --navy2:#0f2138; --bg:#eef1f6; --card:#ffffff;
+      --ink:#1f2937; --muted:#6b7280; --line:#e5e7eb;
+      --green:#12a150; --red:#e0243b; --amber:#e08a12; --blue:#2563eb;
+      --purple:#7c3aed; --teal:#0d9488;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--ink);
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:14px}
+    /* ---------- Header ---------- */
+    .header{background:linear-gradient(180deg,var(--navy),var(--navy2));color:#fff;
+      padding:16px 26px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+    .header h1{margin:0;font-size:19px;font-weight:700}
+    .header .sub{font-size:12px;color:#a9b6c9;margin-top:2px}
+    .header .right{text-align:right;font-size:12px;color:#a9b6c9}
+    .header .right b{color:#fff}
+    /* ---------- Filtros ---------- */
+    .filters{background:var(--card);margin:14px 18px 0;padding:12px 14px;border-radius:10px;
+      display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+    .fgroup{display:flex;flex-direction:column;gap:4px}
+    .fgroup label{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:700}
+    select,input[type=text]{padding:7px 10px;border:1px solid var(--line);border-radius:7px;background:#fff;font-size:13px;min-width:120px;color:var(--ink)}
+    input[type=text]{min-width:190px}
+    .btn{padding:8px 14px;border-radius:7px;border:1px solid transparent;font-size:13px;font-weight:600;cursor:pointer}
+    .btn.primary{background:var(--navy);color:#fff}
+    .btn.ghost{background:#fff;border-color:var(--line);color:var(--ink)}
+    .spacer{flex:1}
+    /* ---------- Secciones ---------- */
+    .section{margin:18px 18px 0}
+    .section-title{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700;margin:0 0 8px 2px}
+    .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+    .card{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--line);
+      border-radius:10px;padding:12px 14px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+    .card .num{font-size:26px;font-weight:800;line-height:1.1}
+    .card .cap{font-size:12px;font-weight:600;margin-top:2px}
+    .card .desc{font-size:11px;color:var(--muted);margin-top:2px}
+    .c-green{border-left-color:var(--green)} .c-green .num{color:var(--green)}
+    .c-red{border-left-color:var(--red)} .c-red .num{color:var(--red)}
+    .c-amber{border-left-color:var(--amber)} .c-amber .num{color:var(--amber)}
+    .c-blue{border-left-color:var(--blue)} .c-blue .num{color:var(--blue)}
+    .c-purple{border-left-color:var(--purple)} .c-purple .num{color:var(--purple)}
+    .c-teal{border-left-color:var(--teal)} .c-teal .num{color:var(--teal)}
+    .c-ink{border-left-color:var(--navy)} .c-ink .num{color:var(--navy)}
+    /* ---------- Indicadores con barra ---------- */
+    .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+    .kpi{background:var(--card);border:1px solid var(--line);border-top:3px solid var(--navy);
+      border-radius:10px;padding:16px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+    .kpi .big{font-size:40px;font-weight:800;line-height:1}
+    .kpi .name{font-size:13px;font-weight:700;margin-top:6px}
+    .kpi .bar{height:9px;border-radius:6px;background:#edf0f4;margin:12px 0 8px;overflow:hidden}
+    .kpi .bar > span{display:block;height:100%;border-radius:6px}
+    .kpi .formula{font-size:11px;color:var(--muted)}
+    /* ---------- Chart / tabla ---------- */
+    .panel{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+    .panel h3{margin:0 0 12px;font-size:15px}
+    .chartbox{position:relative;height:340px}
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    th,td{padding:7px 10px;text-align:left;border-bottom:1px solid var(--line)}
+    th{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);font-weight:700;position:sticky;top:0;background:#fff}
+    td.num,th.num{text-align:right}
+    .tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600}
+    .tag.tarde{background:#fdecee;color:var(--red)}
+    .tablewrap{max-height:380px;overflow:auto;border:1px solid var(--line);border-radius:8px}
+    .muted{color:var(--muted)}
+    #loading{position:fixed;inset:0;background:rgba(238,241,246,.75);display:flex;align-items:center;justify-content:center;font-weight:600;z-index:50}
+    #error{margin:14px 18px;padding:14px 16px;background:#fdecee;border:1px solid #f6b9c1;border-radius:10px;color:#8a1020;white-space:pre-wrap;display:none}
+    .footer{padding:22px 18px;color:var(--muted);font-size:12px}
+  </style>
+</head>
+<body>
+  <div id="loading">Cargando datos…</div>
+
+  <div class="header">
+    <div>
+      <h1 id="h-title">Tiempos de respuesta Surtido</h1>
+      <div class="sub" id="h-sub">Consulta de Inventarios · Área de Almacenes</div>
+    </div>
+    <div class="right">
+      <div>Actualizado: <b id="h-updated">—</b></div>
+      <div>Meta de surtido: <b id="h-target">≤ 5 h</b> hábiles</div>
+    </div>
+  </div>
+
+  <div class="filters">
+    <div class="fgroup">
+      <label>Año</label>
+      <select id="f-anio"><option value="todos">Todos</option></select>
+    </div>
+    <div class="fgroup">
+      <label>Mes</label>
+      <select id="f-mes">
+        <option value="todos">Todos</option>
+        <option value="1">Enero</option><option value="2">Febrero</option><option value="3">Marzo</option>
+        <option value="4">Abril</option><option value="5">Mayo</option><option value="6">Junio</option>
+        <option value="7">Julio</option><option value="8">Agosto</option><option value="9">Septiembre</option>
+        <option value="10">Octubre</option><option value="11">Noviembre</option><option value="12">Diciembre</option>
+      </select>
+    </div>
+    <div class="fgroup">
+      <label>Semana</label>
+      <select id="f-semana"><option value="todas">Todas</option></select>
+    </div>
+    <div class="fgroup">
+      <label>Nave</label>
+      <select id="f-nave"><option value="todas">Todas</option></select>
+    </div>
+    <div class="fgroup">
+      <label>Estatus</label>
+      <select id="f-estatus"><option value="todos">Todos</option></select>
+    </div>
+    <div class="fgroup">
+      <label>Buscar</label>
+      <input type="text" id="f-buscar" placeholder="Prefactura o cliente">
+    </div>
+    <button class="btn primary" id="btn-update">↻ Actualizar</button>
+    <div class="spacer"></div>
+    <button class="btn ghost" id="btn-csv">⬇ Exportar CSV</button>
+  </div>
+
+  <div id="error"></div>
+
+  <!-- Resumen -->
+  <div class="section">
+    <p class="section-title">Resumen de solicitudes</p>
+    <div class="cards" id="cards"></div>
+  </div>
+
+  <!-- Tiempos -->
+  <div class="section">
+    <p class="section-title">Tiempos de surtido (minutos hábiles)</p>
+    <div class="cards" id="times"></div>
+  </div>
+
+  <!-- Indicadores -->
+  <div class="section">
+    <p class="section-title">Indicadores de cumplimiento</p>
+    <div class="kpis" id="kpis"></div>
+  </div>
+
+  <!-- Gráfico -->
+  <div class="section">
+    <div class="panel">
+      <h3>Evolución semanal: solicitudes dentro / fuera de meta y tiempo promedio</h3>
+      <div class="chartbox"><canvas id="chart"></canvas></div>
+      <div id="chart-msg" class="muted" style="display:none;padding:30px;text-align:center"></div>
+    </div>
+  </div>
+
+  <!-- Tabla fuera de meta -->
+  <div class="section">
+    <div class="panel">
+      <h3>Solicitudes fuera de meta <span class="muted" id="atr-count"></span></h3>
+      <div class="tablewrap">
+        <table id="tbl">
+          <thead><tr>
+            <th>Prefactura</th><th>Cliente</th><th>Fecha</th><th>Nave</th>
+            <th>Estatus</th><th>Semana</th><th class="num">Tiempo</th><th class="num">Exceso</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer" id="footer">
+    Cumplimiento = solicitudes entregadas dentro de meta ÷ entregadas con cálculo. Se considera <b>entregada</b> una solicitud con estatus <b>VALIDACION</b> o <b>ENTREGADO</b>.
+    El tiempo cuenta solo horario laboral (L-V 8:30–18:00, sin comida 13:00–14:00).
+  </div>
+
+<script>
+  var CURRENT = null;   // último payload recibido
+  var CHART = null;
+
+  function $(id){ return document.getElementById(id); }
+  function show(el,on){ el.style.display = on ? '' : 'none'; }
+  function isNum(v){ return typeof v === 'number' && !isNaN(v); }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];}); }
+
+  function fmtMin(m){
+    if(!isNum(m) || m < 0) return '—';
+    var h = Math.floor(m/60), mm = Math.round(m%60);
+    return h > 0 ? (h + ' h ' + mm + ' m') : (mm + ' min');
+  }
+  function fmtNum(n){ return (!isNum(n) || n < 0) ? '—' : n.toLocaleString('es-MX'); }
+
+  function getFilters(){
+    return {
+      anio:    $('f-anio').value,
+      mes:     $('f-mes').value,
+      semana:  $('f-semana').value,
+      nave:    $('f-nave').value,
+      estatus: $('f-estatus').value,
+      buscar:  $('f-buscar').value.trim()
+    };
+  }
+
+  function load(){
+    show($('loading'), true);
+    google.script.run
+      .withSuccessHandler(onData)
+      .withFailureHandler(onFail)
+      .getDashboard(getFilters());
+  }
+
+  function showError(msg){
+    show($('loading'), false);
+    var e = $('error'); e.textContent = msg; show(e, true);
+  }
+  function onFail(err){ showError('Error: ' + (err && err.message ? err.message : err)); }
+
+  window.addEventListener('error', function(ev){
+    showError('Error de JavaScript: ' + (ev.message || 'desconocido') + ' (línea ' + ev.lineno + ')');
+  });
+
+  function onData(d){
+    show($('loading'), false);
+    if(d && d.error){ showError(d.error); return; }
+    show($('error'), false);
+    CURRENT = d;
+
+    // Header
+    $('h-title').textContent = d.meta.title;
+    $('h-sub').textContent   = d.meta.subtitle;
+    $('h-updated').textContent = d.meta.updated;
+    $('h-target').textContent  = '≤ ' + d.meta.slaHours + ' h';
+
+    // Opciones de filtro (sin perder la selección actual)
+    fillSelect($('f-anio'), 'todos', d.options.anios, 'Todos');
+    fillSelect($('f-semana'), 'todas', d.options.semanas.map(function(w){return {v:w, t:'S'+w};}), 'Todas', true);
+    fillSelect($('f-nave'), 'todas', d.options.naves, 'Todas');
+    fillSelect($('f-estatus'), 'todos', d.options.estatus, 'Todos');
+
+    renderCards(d.kpis, d.meta);
+    renderTimes(d.kpis);
+    renderKpis(d.kpis, d.meta);
+    renderTable(d.atrasos, d.atrasosTotal);
+    try { renderChart(d.weekly, d.meta); }
+    catch(e){ chartMsg('No se pudo dibujar la gráfica: ' + e.message); }
+  }
+
+  function fillSelect(sel, allVal, items, allLabel, isPair){
+    var prev = sel.value;
+    var html = '<option value="'+allVal+'">'+allLabel+'</option>';
+    items.forEach(function(it){
+      if(isPair && typeof it==='object'){ html += '<option value="'+esc(it.v)+'">'+esc(it.t)+'</option>'; }
+      else { html += '<option value="'+esc(it)+'">'+esc(it)+'</option>'; }
+    });
+    sel.innerHTML = html;
+    // restaurar selección si sigue existiendo
+    if([].some.call(sel.options,function(o){return o.value===prev;})) sel.value = prev;
+  }
+
+  function card(cls,num,cap,desc){
+    return '<div class="card '+cls+'"><div class="num">'+num+'</div>'+
+           '<div class="cap">'+cap+'</div><div class="desc">'+desc+'</div></div>';
+  }
+  function renderCards(k, meta){
+    var h='';
+    h+=card('c-ink',    fmtNum(k.total),      'Total solicitudes',  'Registros filtrados');
+    h+=card('c-blue',   fmtNum(k.entregadas), 'Entregadas',         'VALIDACION + ENTREGADO');
+    h+=card('c-green',  fmtNum(k.dentro),     'Dentro de meta',     '≤ '+meta.slaHours+' h hábiles');
+    h+=card('c-red',    fmtNum(k.fuera),      'Fuera de meta',      '> '+meta.slaHours+' h hábiles');
+    h+=card('c-amber',  fmtNum(k.enProceso),  'En proceso',         'Otro estatus (ej. pausado)');
+    h+=card('c-purple', fmtNum(k.sinCalculo), 'Sin cálculo',        'Falta hora recibo o surtido');
+    $('cards').innerHTML=h;
+  }
+  function renderTimes(k){
+    var h='';
+    h+=card('c-teal',   fmtNum(k.prom),    'Promedio', fmtMin(k.prom));
+    h+=card('c-blue',   fmtNum(k.mediana), 'Mediana',  fmtMin(k.mediana));
+    h+=card('c-green',  fmtNum(k.min),     'Mínimo',   fmtMin(k.min));
+    h+=card('c-red',    fmtNum(k.max),     'Máximo',   fmtMin(k.max));
+    $('times').innerHTML=h;
+  }
+
+  function kpiBlock(pct,name,formula,col){
+    return '<div class="kpi" style="border-top-color:'+col+'">'+
+      '<div class="big" style="color:'+col+'">'+pct+'%</div>'+
+      '<div class="name">'+name+'</div>'+
+      '<div class="bar"><span style="width:'+Math.min(pct,100)+'%;background:'+col+'"></span></div>'+
+      '<div class="formula">'+formula+'</div></div>';
+  }
+  function renderKpis(k, meta){
+    var h='';
+    h+=kpiBlock(k.pctCumpl,  '% Cumplimiento (≤ '+meta.slaHours+' h)', 'Dentro de meta ÷ Con cálculo ('+k.dentro+' ÷ '+k.conCalculo+')', 'var(--green)');
+    h+=kpiBlock(k.pctFuera,  '% Fuera de meta (> '+meta.slaHours+' h)', 'Fuera de meta ÷ Con cálculo ('+k.fuera+' ÷ '+k.conCalculo+')', 'var(--red)');
+    h+=kpiBlock(k.pctSinCalc,'% Sin cálculo', 'Sin cálculo ÷ Total ('+k.sinCalculo+' ÷ '+k.total+')', 'var(--purple)');
+    h+=kpiBlock(k.pctAvance, '% Avance de entrega', 'Entregadas ÷ Total ('+k.entregadas+' ÷ '+k.total+')', 'var(--blue)');
+    $('kpis').innerHTML=h;
+  }
+
+  function chartMsg(txt){
+    show($('chart-msg'), !!txt);
+    $('chart-msg').textContent = txt || '';
+    show($('chart').parentNode, !txt);
+  }
+
+  function renderChart(weekly, meta){
+    if(CHART){ CHART.destroy(); CHART = null; }
+    if(typeof Chart === 'undefined'){ chartMsg('No se pudo cargar la librería de gráficas (Chart.js).'); return; }
+    if(!weekly.length){ chartMsg('No hay solicitudes entregadas con tiempo calculado para graficar.'); return; }
+    chartMsg('');
+
+    var labels = weekly.map(function(w){return w.label;});
+    CHART = new Chart($('chart').getContext('2d'),{
+      data:{
+        labels:labels,
+        datasets:[
+          {type:'bar', label:'Dentro de meta', data:weekly.map(function(w){return w.dentro;}),
+           yAxisID:'y', stack:'s', backgroundColor:'rgba(18,161,80,.55)', borderRadius:3, order:3},
+          {type:'bar', label:'Fuera de meta', data:weekly.map(function(w){return w.fuera;}),
+           yAxisID:'y', stack:'s', backgroundColor:'rgba(224,36,59,.55)', borderRadius:3, order:3},
+          {type:'line', label:'Tiempo prom. (min)', data:weekly.map(function(w){return w.prom;}),
+           yAxisID:'y1', borderColor:'#e08a12', backgroundColor:'#e08a12', tension:.25, pointRadius:3, borderWidth:2, order:1},
+          {type:'line', label:'Meta '+meta.slaMinutes+' min', data:labels.map(function(){return meta.slaMinutes;}),
+           yAxisID:'y1', borderColor:'#e0243b', pointRadius:0, borderWidth:1, borderDash:[6,4], order:0}
+        ]
+      },
+      options:{
+        responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
+        plugins:{legend:{position:'bottom',labels:{boxWidth:12,font:{size:11}}},
+          tooltip:{callbacks:{label:function(c){
+            var v=c.parsed.y;
+            return c.dataset.yAxisID==='y1' ? c.dataset.label+': '+fmtMin(v) : c.dataset.label+': '+v;
+          }}}},
+        scales:{
+          y:{position:'left',stacked:true,min:0,ticks:{precision:0,font:{size:11}},grid:{color:'#eef0f3'},title:{display:true,text:'Solicitudes',font:{size:10}}},
+          y1:{position:'right',min:0,grid:{drawOnChartArea:false},ticks:{font:{size:11}},title:{display:true,text:'Minutos',font:{size:10}}},
+          x:{stacked:true,grid:{display:false},ticks:{font:{size:11}}}
+        }
+      }
+    });
+  }
+
+  function renderTable(rows, total){
+    $('atr-count').textContent = '('+total+')';
+    var tb = $('tbl').querySelector('tbody');
+    if(!rows.length){ tb.innerHTML='<tr><td colspan="8" class="muted">Sin solicitudes fuera de meta para el filtro seleccionado.</td></tr>'; return; }
+    tb.innerHTML = rows.map(function(r){
+      return '<tr><td>'+esc(r.no)+'</td><td>'+esc(r.cte)+'</td><td>'+esc(r.fecha)+'</td><td>'+esc(r.nave)+'</td>'+
+        '<td>'+esc(r.estatus)+'</td><td>'+esc(r.semana)+'</td>'+
+        '<td class="num"><span class="tag tarde">'+fmtMin(r.min)+'</span></td>'+
+        '<td class="num">+'+fmtMin(r.exceso)+'</td></tr>';
+    }).join('');
+    if(total > rows.length){
+      tb.innerHTML += '<tr><td colspan="8" class="muted">Mostrando '+rows.length+' de '+total+' (exporta el CSV para ver todo).</td></tr>';
+    }
+  }
+
+  function exportCsv(){
+    if(!CURRENT || !CURRENT.detalle){ return; }
+    var head = ['Prefactura','Cliente','Fecha','Nave','Estatus','Semana','Tiempo (min)','Resultado'];
+    var lines = [head.join(',')];
+    CURRENT.detalle.forEach(function(r){
+      var row=[r.no,r.cte,r.fecha,r.nave,r.estatus,r.semana,r.min,r.resultado].map(function(v){
+        v=String(v==null?'':v); return /[",\n]/.test(v)?('"'+v.replace(/"/g,'""')+'"'):v;
+      });
+      lines.push(row.join(','));
+    });
+    var blob = new Blob(['﻿'+lines.join('\r\n')], {type:'text/csv;charset=utf-8;'});
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'tiempos_surtido.csv';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  }
+
+  // Eventos
+  $('btn-update').addEventListener('click', load);
+  $('btn-csv').addEventListener('click', exportCsv);
+  ['f-anio','f-mes','f-semana','f-nave','f-estatus'].forEach(function(id){
+    $(id).addEventListener('change', load);
+  });
+  var searchTimer = null;
+  $('f-buscar').addEventListener('input', function(){
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(load, 400);
+  });
+
+  // Carga inicial
+  load();
+</script>
+</body>
+</html>
