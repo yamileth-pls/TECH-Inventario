@@ -18,7 +18,7 @@
  *    - Se considera ENTREGADA una solicitud con estatus VALIDACION o ENTREGADO.
  *    - El tiempo de surtido solo cuenta horario laboral:
  *      Lunes a Viernes, 8:30 - 18:00, sin contar la hora de comida (13:00 - 14:00).
- *    - Meta: surtir en 5 horas hábiles (300 min).
+ *    - Meta: surtir en 6 horas laborales (360 min).
  * ==========================================================================
  */
 
@@ -27,12 +27,15 @@ var SPREADSHEET_ID = '1we4yhPySbL-wODeZcrNMYvMZ0HmrHmS2sM1oLZsrQoM';
 var SHEET_NAME     = 'Inventario';
 var META_TITLE     = 'Tiempos de respuesta Surtido';
 var META_SUBTITLE  = 'Consulta de Inventarios · Área de Almacenes';
-var SLA_HOURS      = 5;                 // meta: horas hábiles para surtir
-var SLA_MINUTES    = SLA_HOURS * 60;    // 300
+var SLA_HOURS      = 6;                 // meta: horas laborales para surtir
+var SLA_MINUTES    = SLA_HOURS * 60;    // 360
 var MAX_SPAN_DAYS  = 60;                // más allá de esto se considera dato corrupto, no un pedido real
 
 // Estatus (normalizados, sin acentos ni mayúsculas) que cuentan como "entregado"
 var ENTREGADO_ESTATUS = ['validacion', 'entregado'];
+
+// Estatus (normalizados) que se omiten por completo: no cuentan en ningún indicador ni filtro
+var EXCLUIR_ESTATUS = ['cancelado', 'cancelada', 'pausado', 'pausada'];
 
 // Ventana laboral del día (horas locales)
 var WORKDAY_SEGMENTS = [
@@ -71,13 +74,47 @@ function normalize_(s) {
     .trim();
 }
 
+// Piezas (columna PZS) como entero >= 0. Vacío o ilegible = 0 (no se pondera).
+function parsePzs_(v) {
+  var n = typeof v === 'number' ? v : parseFloat(String(v == null ? '' : v).replace(/,/g, ''));
+  if (isNaN(n) || n < 0) return 0;
+  return Math.round(n);
+}
+
+// dd/MM/yyyy sin llamar a servicios de Apps Script (se usa miles de veces por carga).
 function fmt_(d) {
-  return d ? Utilities.formatDate(d, Session.getScriptTimeZone(), 'dd/MM/yyyy') : '';
+  if (!d) return '';
+  return ('0' + d.getDate()).slice(-2) + '/' + ('0' + (d.getMonth() + 1)).slice(-2) + '/' + d.getFullYear();
+}
+
+// dd/MM/yyyy HH:mm (24 h)
+function fmtDT_(d) {
+  return fmt_(d) + ' ' + ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+}
+
+// Número de semana ISO de una fecha (Lunes = inicio de semana).
+function isoWeek_(d) {
+  var date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  var dayNum = (date.getUTCDay() + 6) % 7;            // Lunes = 0
+  date.setUTCDate(date.getUTCDate() - dayNum + 3);    // jueves de esa semana
+  var firstThu = new Date(Date.UTC(date.getUTCFullYear(), 0, 4));
+  var firstDayNum = (firstThu.getUTCDay() + 6) % 7;
+  firstThu.setUTCDate(firstThu.getUTCDate() - firstDayNum + 3);
+  return 1 + Math.round((date - firstThu) / (7 * 24 * 3600 * 1000));
+}
+
+// Índice de columna por nombre de encabezado exacto (sin acentos/mayúsculas). -1 si no existe.
+function findCol_(normHeaders, aliases) {
+  for (var a = 0; a < aliases.length; a++) {
+    var idx = normHeaders.indexOf(normalize_(aliases[a]));
+    if (idx >= 0) return idx;
+  }
+  return -1;
 }
 
 // ------------------------- CÁLCULO DE TIEMPO (sin cambios) -------------------------
 /**
- * Minutos hábiles transcurridos entre dos fechas/hora, contando solo
+ * Minutos laborales transcurridos entre dos fechas/hora, contando solo
  * Lunes-Viernes, 8:30-18:00, excluyendo la hora de comida 13:00-14:00.
  */
 function businessMinutesBetween_(start, end) {
@@ -169,71 +206,121 @@ function parseFecha_(cell) {
 }
 
 // ------------------------- LECTURA DE REGISTROS -------------------------
+// Las columnas se ubican por NOMBRE de encabezado (no por posición), así que
+// insertar/mover columnas en la hoja no rompe el tablero.
 function buildRecords_() {
+  var t0 = Date.now();
   var sheet = getSheet_();
   var lastRow = sheet.getLastRow();
   var lastCol = sheet.getLastColumn();
   if (lastRow < 2) return { error: 'La hoja "' + SHEET_NAME + '" no tiene datos.' };
 
-  var values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
-  var recs = [];
+  var values = sheet.getRange(1, 1, lastRow, lastCol).getValues();
+  var readMs = Date.now() - t0;
 
-  values.forEach(function (row) {
+  var headers = values[0];
+  var nh = headers.map(normalize_);
+  var cPref  = findCol_(nh, ['prefactura', 'columna 1']);
+  if (cPref < 0) cPref = 0;                                  // la prefactura siempre es la columna A
+  var cCli   = findCol_(nh, ['cliente']);
+  var cFec   = findCol_(nh, ['fecha']);
+  var cHRec  = findCol_(nh, ['hora recibo']);
+  var cNave  = findCol_(nh, ['nave']);
+  var cFSur  = findCol_(nh, ['fecha de surtido']);           // opcional
+  var cHSur  = findCol_(nh, ['hora de surtido']);
+  var cEstA  = findCol_(nh, ['estatus almacen']);
+  var cEstE  = findCol_(nh, ['estatus de entrega']);
+  var cEstR  = findCol_(nh, ['estatus real']);               // opcional: solo para omitir cancelados/pausados
+  var cSem   = findCol_(nh, ['semana']);                     // opcional: si no existe se calcula de la fecha
+  var cDesc  = findCol_(nh, ['descripcion']);                // opcional: solo para el desglose por prefactura
+  var cPzs   = findCol_(nh, ['pzs']);                        // opcional
+
+  var missing = [];
+  if (cFec < 0)  missing.push('Fecha');
+  if (cHRec < 0) missing.push('HORA RECIBO');
+  if (cHSur < 0) missing.push('HORA DE SURTIDO');
+  if (cEstA < 0 && cEstE < 0) missing.push('Estatus Almacen');
+  if (missing.length) {
+    return { error: 'No se encontraron las columnas: ' + missing.join(', ') +
+             '.\nEncabezados detectados: ' + headers.join(' | ') };
+  }
+
+  var recs = [];
+  for (var i = 1; i < values.length; i++) {
     try {
-      var prefactura = row[0];  // A
-      var cliente = row[2];     // C
-      var fecha = row[3];       // D
-      var horaRecibo = row[4];  // E
-      var nave = row[13];       // N
-      var horaSurtido = row[15];// P
-      var estatusAlmacen = row[17]; // R
-      var estatusEntrega = row[24]; // Y
-      var semana = row[35];     // AJ
+      var row = values[i];
+      var prefactura = row[cPref];
 
       // fila vacía o sin folio: se ignora
-      if (!prefactura) return;
+      if (!prefactura) continue;
 
-      var fechaDt = parseFecha_(fecha);
-      if (!fechaDt) return; // fecha ausente o irreconocible
+      var fechaDt = parseFecha_(row[cFec]);
+      if (!fechaDt) continue; // fecha ausente o irreconocible
       var anio = fechaDt.getFullYear();
-      if (anio < 2000 || anio > 2100) return; // fecha claramente corrupta
+      if (anio < 2000 || anio > 2100) continue; // fecha claramente corrupta
 
       var tiempoMin = null;
       var cumple = null;
 
-      var tRecibo = parseTimeCell_(horaRecibo);
-      var tSurtido = parseTimeCell_(horaSurtido);
+      var tRecibo = parseTimeCell_(row[cHRec]);
+      var tSurtido = parseTimeCell_(row[cHSur]);
+      var fSur = cFSur >= 0 ? parseFecha_(row[cFSur]) : null;
 
-      if (tRecibo && tSurtido) {
-        var startDT = combineDateTime_(fechaDt, tRecibo);
-        var endDT = combineDateTime_(fechaDt, tSurtido);
-        // si la hora de surtido es "menor" que la de recibo, cruzó medianoche
-        if (endDT <= startDT) endDT.setDate(endDT.getDate() + 1);
+      var startDT = tRecibo ? combineDateTime_(fechaDt, tRecibo) : null;
+      var endDT = tSurtido ? combineDateTime_(fSur || fechaDt, tSurtido) : null;
+
+      if (startDT && endDT) {
+        // sin fecha de surtido capturada: si la hora de surtido es "menor" que la de recibo, cruzó medianoche
+        if (!fSur && endDT <= startDT) endDT.setDate(endDT.getDate() + 1);
 
         tiempoMin = businessMinutesBetween_(startDT, endDT);
         cumple = tiempoMin !== null ? tiempoMin <= SLA_MINUTES : null;
       }
 
-      var estatus = (estatusAlmacen || estatusEntrega) ? String(estatusAlmacen || estatusEntrega).trim() : '(Sin estatus)';
+      var estA = cEstA >= 0 ? row[cEstA] : '';
+      var estE = cEstE >= 0 ? row[cEstE] : '';
+      var estatus = (estA || estE) ? String(estA || estE).trim() : '(Sin estatus)';
+
+      // pausadas / canceladas: se omiten (no afectan ningún indicador)
+      if (EXCLUIR_ESTATUS.indexOf(normalize_(estatus)) >= 0) continue;
+      if (cEstR >= 0 && EXCLUIR_ESTATUS.indexOf(normalize_(row[cEstR])) >= 0) continue;
+
+      var nave = cNave >= 0 ? row[cNave] : '';
+      var semCell = cSem >= 0 ? row[cSem] : '';
+      var semana = (semCell !== '' && semCell != null && !(semCell instanceof Date))
+        ? String(semCell).trim()
+        : String(isoWeek_(fechaDt));
+
+      var entregado = ENTREGADO_ESTATUS.indexOf(normalize_(estatus)) >= 0;
 
       recs.push({
         prefactura: String(prefactura),
-        cliente: cliente ? String(cliente).trim() : '',
+        cliente: (cCli >= 0 && row[cCli]) ? String(row[cCli]).trim() : '',
+        descripcion: (cDesc >= 0 && row[cDesc]) ? String(row[cDesc]).trim() : '',
+        pzs: (cPzs >= 0 && row[cPzs] !== '' && row[cPzs] != null) ? String(row[cPzs]).trim() : '',
+        pzsN: cPzs >= 0 ? parsePzs_(row[cPzs]) : 0,
         fecha: fechaDt,
         anio: anio,
         mes: fechaDt.getMonth() + 1,
         nave: nave ? String(nave).trim() : '(Sin nave)',
         estatus: estatus,
-        entregado: ENTREGADO_ESTATUS.indexOf(normalize_(estatus)) >= 0,
-        semana: semana !== '' && semana !== null ? String(semana).trim() : '',
+        entregado: entregado,
+        semana: semana,
         tiempoMin: tiempoMin,
-        cumple: cumple
+        cumple: cumple,
+        cat: lineCat_(entregado, tiempoMin, cumple),
+        iniDt: startDT,
+        finDt: endDT,
+        recibo: startDT ? fmtDT_(startDT) : '',
+        surtido: endDT ? fmtDT_(endDT) : ''
       });
     } catch (rowErr) {
       // fila con datos inesperados: se omite y se sigue con las demás
     }
-  });
+  }
 
+  DIAG_.readMs = readMs;
+  DIAG_.rows = recs.length;
   return { recs: recs };
 }
 
@@ -247,8 +334,68 @@ function cmpSemana_(a, b) {
   return String(a).localeCompare(String(b));
 }
 
-// ------------------------- API PRINCIPAL -------------------------
-function getDashboard(filters) {
+// ------------------------- CLASIFICACIÓN -------------------------
+// Categoría de una línea (renglón de la hoja):
+//   enProceso  = aún sin VALIDACION / ENTREGADO
+//   sinCalculo = entregada pero sin hora de recibo o de surtido
+//   dentro / fuera = entregada con tiempo laboral calculado (<= / > meta)
+function lineCat_(entregado, tiempoMin, cumple) {
+  if (!entregado) return 'enProceso';
+  if (typeof tiempoMin !== 'number') return 'sinCalculo';
+  return cumple === true ? 'dentro' : 'fuera';
+}
+
+// Agrupa las líneas por prefactura (módulo "Nivel de Servicio").
+// Una prefactura CUMPLE solo si TODAS sus líneas se surtieron en <= meta. Reglas, en orden:
+//   1) alguna línea fuera de meta            -> fuera   (ya no puede cumplir)
+//   2) alguna línea aún sin entregar         -> enProceso
+//   3) alguna línea entregada sin cálculo    -> sinCalculo
+//   4) todas entregadas y dentro de meta     -> dentro
+// Su tiempo laboral es el de su línea más tardada.
+function buildPrefacturas_(recs) {
+  var map = {}, order = [];
+  recs.forEach(function (r) {
+    if (!map[r.prefactura]) { map[r.prefactura] = []; order.push(r.prefactura); }
+    map[r.prefactura].push(r);
+  });
+
+  return order.map(function (no) {
+    var ls = map[no];
+    var first = ls[0], cte = '', maxMin = null, ini = null, fin = null, allDel = true;
+    var cnt = { dentro: 0, fuera: 0, enProceso: 0, sinCalculo: 0 };
+    var naves = {}, estatuses = {};
+
+    ls.forEach(function (r) {
+      cnt[r.cat]++;
+      if (!r.entregado) allDel = false;
+      if (typeof r.tiempoMin === 'number' && (maxMin === null || r.tiempoMin > maxMin)) maxMin = r.tiempoMin;
+      if (r.iniDt && (!ini || r.iniDt < ini)) ini = r.iniDt;
+      if (r.finDt && (!fin || r.finDt > fin)) fin = r.finDt;
+      if (!cte && r.cliente) cte = r.cliente;
+      naves[r.nave] = true;
+      estatuses[r.estatus] = true;
+      if (r.fecha < first.fecha) first = r;
+    });
+
+    var cat = cnt.fuera ? 'fuera' : cnt.enProceso ? 'enProceso' : cnt.sinCalculo ? 'sinCalculo' : 'dentro';
+    return {
+      prefactura: no, cliente: cte,
+      fecha: first.fecha, anio: first.anio, mes: first.mes, semana: first.semana,
+      nave: Object.keys(naves), estatus: Object.keys(estatuses),
+      entregado: allDel, cat: cat, tiempoMin: maxMin,
+      cumple: cat === 'dentro' ? true : (cat === 'fuera' ? false : null),
+      recibo: ini ? fmtDT_(ini) : '', surtido: fin ? fmtDT_(fin) : '',
+      nLineas: ls.length, nDentro: cnt.dentro, nFuera: cnt.fuera, nProceso: cnt.enProceso, nSinCalc: cnt.sinCalculo,
+      lines: ls
+    };
+  });
+}
+
+// ------------------------- FILTROS -------------------------
+// Aplica los filtros del tablero a "unidades" (líneas o prefacturas).
+// forWeekly = todo menos Semana (para la gráfica y las opciones de semana);
+// filtered = todos los filtros (para KPIs, tabla y CSV).
+function filterUnits_(units, filters) {
   filters = filters || {};
   var fAnio    = String(filters.anio    || 'todos');
   var fMes     = String(filters.mes     || 'todos');
@@ -257,23 +404,66 @@ function getDashboard(filters) {
   var fEstatus = String(filters.estatus || 'todos');
   var fBuscar  = normalize_(filters.buscar || '');
 
+  // nave / estatus: texto en una línea, lista en una prefactura ("alguna de sus líneas")
+  function has(v, x) { return [].concat(v).indexOf(x) >= 0; }
+
+  var forWeekly = units.filter(function (r) {
+    if (fAnio !== 'todos' && String(r.anio) !== fAnio) return false;
+    if (fMes !== 'todos' && String(r.mes) !== fMes) return false;
+    if (fNave !== 'todas' && !has(r.nave, fNave)) return false;
+    if (fEstatus !== 'todos' && !has(r.estatus, fEstatus)) return false;
+    if (fBuscar && normalize_(r.prefactura + ' ' + r.cliente).indexOf(fBuscar) === -1) return false;
+    return true;
+  });
+  var filtered = fSemana === 'todas' ? forWeekly : forWeekly.filter(function (r) { return r.semana === fSemana; });
+  return { forWeekly: forWeekly, filtered: filtered };
+}
+
+// Módulos: 'surtido' = por línea · 'servicio' = por prefactura · 'piezas' = por pieza (cada línea pesa su PZS)
+function normModulo_(m) {
+  return (m === 'servicio' || m === 'piezas') ? m : 'surtido';
+}
+
+// Unidades del módulo. En 'piezas' se descartan las líneas sin PZS (no tienen peso).
+function unitsFor_(recs, modulo) {
+  if (modulo === 'servicio') return buildPrefacturas_(recs);
+  if (modulo === 'piezas') return recs.filter(function (r) { return r.pzsN > 0; });
+  return recs;
+}
+
+// Peso de una unidad en los conteos: 1 (línea / prefactura) o sus piezas.
+function weightOf_(u, modulo) {
+  return modulo === 'piezas' ? u.pzsN : 1;
+}
+
+// Mediana ponderada de [{v, w}] (w entero). Con todos los pesos = 1 equivale a la mediana normal.
+function weightedMedian_(items) {
+  var arr = items.slice().sort(function (a, b) { return a.v - b.v; });
+  var n = arr.reduce(function (t, i) { return t + i.w; }, 0);
+  if (!n) return null;
+  function valueAtRank(rank) {            // rank 1-based
+    var cum = 0;
+    for (var i = 0; i < arr.length; i++) { cum += arr[i].w; if (cum >= rank) return arr[i].v; }
+    return arr[arr.length - 1].v;
+  }
+  return n % 2 ? valueAtRank((n + 1) / 2) : Math.round((valueAtRank(n / 2) + valueAtRank(n / 2 + 1)) / 2);
+}
+
+// ------------------------- API PRINCIPAL -------------------------
+// Diagnóstico de la última llamada (se muestra en el encabezado para ver dónde se va el tiempo).
+var DIAG_ = {};
+
+function getDashboard(filters, modulo) {
+  var tStart = Date.now();
+  modulo = normModulo_(modulo);
+
   var built = buildRecords_();
   if (built.error) return { error: built.error };
   var recs = built.recs;
+  var units = unitsFor_(recs, modulo);
+  var sinPzs = modulo === 'piezas' ? recs.length - units.length : 0;
 
-  function passBase(r) {
-    if (fAnio !== 'todos' && String(r.anio) !== fAnio) return false;
-    if (fMes !== 'todos' && String(r.mes) !== fMes) return false;
-    if (fNave !== 'todas' && r.nave !== fNave) return false;
-    if (fEstatus !== 'todos' && r.estatus !== fEstatus) return false;
-    if (fBuscar && normalize_(r.prefactura + ' ' + r.cliente).indexOf(fBuscar) === -1) return false;
-    return true;
-  }
-  function passSemana(r) {
-    return fSemana === 'todas' || r.semana === fSemana;
-  }
-
-  // ---- Opciones para los filtros (sobre todo el universo) ----
+  // ---- Opciones para los filtros (sobre todas las líneas) ----
   var aniosSet = {}, navesSet = {}, estatusSet = {};
   recs.forEach(function (r) {
     aniosSet[r.anio] = true; navesSet[r.nave] = true; estatusSet[r.estatus] = true;
@@ -282,11 +472,10 @@ function getDashboard(filters) {
   var naves = Object.keys(navesSet).sort();
   var estatusList = Object.keys(estatusSet).sort();
 
-  // ---- Registros que pasan Año/Mes/Nave/Estatus/Buscar (para el gráfico semanal) ----
-  var forWeekly = recs.filter(passBase);
-
-  // ---- Registros que pasan TODOS los filtros (para KPIs y tabla) ----
-  var filtered = forWeekly.filter(passSemana);
+  // ---- Unidades filtradas ----
+  var f = filterUnits_(units, filters);
+  var forWeekly = f.forWeekly;
+  var filtered = f.filtered;
 
   // ---- Semanas disponibles (según los demás filtros) ----
   var semSet = {};
@@ -294,27 +483,26 @@ function getDashboard(filters) {
   var semanas = Object.keys(semSet).sort(cmpSemana_);
 
   // ---- KPIs ----
-  var k = { total: 0, entregadas: 0, enProceso: 0, conCalculo: 0, sinCalculo: 0, dentro: 0, fuera: 0 };
+  // Los conteos se ponderan por el peso de la unidad (1, o las piezas en el módulo 'piezas').
+  var k = { total: 0, entregadas: 0, enProceso: 0, sinCalculo: 0, dentro: 0, fuera: 0 };
   var tiempos = [];
   filtered.forEach(function (r) {
-    k.total++;
-    if (!r.entregado) { k.enProceso++; return; }
-    k.entregadas++;
-    if (typeof r.tiempoMin !== 'number') { k.sinCalculo++; return; }
-    k.conCalculo++;
-    tiempos.push(r.tiempoMin);
-    if (r.cumple === true) k.dentro++; else k.fuera++;
+    var w = weightOf_(r, modulo);
+    k.total += w;
+    k[r.cat] += w;
+    if (r.entregado) k.entregadas += w;
+    if (r.cat === 'dentro' || r.cat === 'fuera') tiempos.push({ v: r.tiempoMin, w: w });
   });
+  k.conCalculo = k.dentro + k.fuera;
 
   var prom = null, mediana = null, min = null, max = null;
   if (tiempos.length) {
-    prom = Math.round(tiempos.reduce(function (a, b) { return a + b; }, 0) / tiempos.length);
-    var sorted = tiempos.slice().sort(function (a, b) { return a - b; });
-    mediana = sorted.length % 2
-      ? sorted[(sorted.length - 1) / 2]
-      : Math.round((sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2);
-    min = sorted[0];
-    max = sorted[sorted.length - 1];
+    var sumW = tiempos.reduce(function (t, i) { return t + i.w; }, 0);
+    prom = Math.round(tiempos.reduce(function (t, i) { return t + i.v * i.w; }, 0) / sumW);
+    mediana = weightedMedian_(tiempos);
+    var vals = tiempos.map(function (i) { return i.v; });
+    min = Math.min.apply(null, vals);
+    max = Math.max.apply(null, vals);
   }
 
   var kpis = {
@@ -335,16 +523,16 @@ function getDashboard(filters) {
     pctAvance:   k.total ? Math.round(k.entregadas / k.total * 100) : 0
   };
 
-  // ---- Serie semanal (solo entregadas con cálculo) ----
+  // ---- Serie semanal (solo unidades con cálculo) ----
   var groups = {};
   forWeekly.forEach(function (r) {
-    if (!r.entregado || typeof r.tiempoMin !== 'number') return;
+    if (r.cat !== 'dentro' && r.cat !== 'fuera') return;
     var key = r.semana !== '' ? ('S' + r.semana) : fmt_(r.fecha);
     if (!groups[key]) groups[key] = { sem: r.semana, count: 0, sum: 0, dentro: 0, fuera: 0, fecha: r.fecha };
-    var g = groups[key];
-    g.count++;
-    g.sum += r.tiempoMin;
-    if (r.cumple === true) g.dentro++; else g.fuera++;
+    var g = groups[key], w = weightOf_(r, modulo);
+    g.count += w;
+    g.sum += r.tiempoMin * w;
+    if (r.cat === 'dentro') g.dentro += w; else g.fuera += w;
   });
   var weekly = Object.keys(groups).sort(function (a, b) {
     var ga = groups[a], gb = groups[b];
@@ -364,27 +552,23 @@ function getDashboard(filters) {
     };
   });
 
-  // ---- Tabla: solicitudes entregadas fuera de meta ----
-  var fueraRows = filtered.filter(function (r) { return r.entregado && r.cumple === false; })
+  // ---- Tabla: unidades fuera de meta ----
+  var fueraRows = filtered.filter(function (r) { return r.cat === 'fuera'; })
     .sort(function (a, b) { return b.tiempoMin - a.tiempoMin; });
   var atrasos = fueraRows.slice(0, 300).map(function (r) {
+    if (modulo === 'servicio') {
+      return {
+        no: r.prefactura, cte: r.cliente, recibo: r.recibo, surtido: r.surtido,
+        semana: r.semana, lineas: r.nLineas, lineasFuera: r.nFuera,
+        min: r.tiempoMin, exceso: r.tiempoMin - SLA_MINUTES
+      };
+    }
     return {
       no: r.prefactura, cte: r.cliente, fecha: fmt_(r.fecha), nave: r.nave,
       estatus: r.estatus, semana: r.semana, min: r.tiempoMin,
+      desc: r.descripcion, pzs: r.pzsN,
+      recibo: r.recibo, surtido: r.surtido,
       exceso: r.tiempoMin - SLA_MINUTES
-    };
-  });
-
-  // ---- Detalle para exportar CSV ----
-  var detalle = filtered.map(function (r) {
-    var res = !r.entregado ? 'En proceso' :
-              typeof r.tiempoMin !== 'number' ? 'Sin cálculo' :
-              r.cumple === true ? 'Dentro de meta' : 'Fuera de meta';
-    return {
-      no: r.prefactura, cte: r.cliente, fecha: fmt_(r.fecha), nave: r.nave,
-      estatus: r.estatus, semana: r.semana,
-      min: typeof r.tiempoMin === 'number' ? r.tiempoMin : '',
-      resultado: res
     };
   });
 
@@ -392,15 +576,67 @@ function getDashboard(filters) {
     meta: {
       title: META_TITLE,
       subtitle: META_SUBTITLE,
+      modulo: modulo,
+      sinPzs: sinPzs,
       slaHours: SLA_HOURS,
       slaMinutes: SLA_MINUTES,
-      updated: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd/MM/yy, HH:mm')
+      updated: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd/MM/yy, HH:mm'),
+      diag: { rows: DIAG_.rows, readMs: DIAG_.readMs, totalMs: Date.now() - tStart }
     },
     options: { anios: anios, semanas: semanas, naves: naves, estatus: estatusList },
     kpis: kpis,
     weekly: weekly,
     atrasos: atrasos,
     atrasosTotal: fueraRows.length,
-    detalle: detalle
+    atrasosPzs: modulo === 'piezas' ? fueraRows.reduce(function (t, r) { return t + r.pzsN; }, 0) : 0
   };
+}
+
+// ¿La unidad pertenece a la tarjeta (categoría) seleccionada?
+function inCategory_(u, cat) {
+  switch (cat) {
+    case 'entregadas': return u.entregado;
+    case 'dentro': case 'fuera': case 'enProceso': case 'sinCalculo': return u.cat === cat;
+    default: return true; // 'total'
+  }
+}
+
+var CAT_TEXT_ = { dentro: 'Dentro de meta', fuera: 'Fuera de meta', enProceso: 'En proceso', sinCalculo: 'Sin cálculo' };
+
+// Desglose de las unidades filtradas que pertenecen a una tarjeta.
+// Se usa al hacer clic en una tarjeta y al exportar CSV.
+//  - 'surtido': una fila por línea
+//  - 'servicio': una fila por prefactura, con sus líneas anidadas en "lineas"
+function getDetalle(filters, cat, modulo) {
+  modulo = normModulo_(modulo);
+  var built = buildRecords_();
+  if (built.error) throw new Error(built.error);
+
+  var rows = filterUnits_(unitsFor_(built.recs, modulo), filters).filtered
+    .filter(function (u) { return inCategory_(u, cat); });
+  if (cat === 'fuera') rows.sort(function (a, b) { return b.tiempoMin - a.tiempoMin; });
+
+  function lineRow(r) {
+    return {
+      no: r.prefactura, cte: r.cliente, fecha: fmt_(r.fecha), nave: r.nave,
+      estatus: r.estatus, semana: r.semana,
+      desc: r.descripcion, pzs: r.pzs,
+      recibo: r.recibo, surtido: r.surtido,
+      min: typeof r.tiempoMin === 'number' ? r.tiempoMin : '',
+      resultado: CAT_TEXT_[r.cat]
+    };
+  }
+
+  if (modulo === 'servicio') {
+    return rows.map(function (p) {
+      return {
+        no: p.prefactura, cte: p.cliente, recibo: p.recibo, surtido: p.surtido, semana: p.semana,
+        nLineas: p.nLineas, nDentro: p.nDentro, nFuera: p.nFuera, nProceso: p.nProceso, nSinCalc: p.nSinCalc,
+        min: typeof p.tiempoMin === 'number' ? p.tiempoMin : '',
+        resultado: CAT_TEXT_[p.cat],
+        lineas: p.lines.map(lineRow)
+      };
+    });
+  }
+  return rows.map(lineRow);
 }

@@ -41,6 +41,9 @@
     .card .num{font-size:26px;font-weight:800;line-height:1.1}
     .card .cap{font-size:12px;font-weight:600;margin-top:2px}
     .card .desc{font-size:11px;color:var(--muted);margin-top:2px}
+    .card.click{cursor:pointer;transition:box-shadow .15s,transform .15s}
+    .card.click:hover{box-shadow:0 4px 12px rgba(0,0,0,.12);transform:translateY(-1px)}
+    .hint{font-weight:400;text-transform:none;letter-spacing:0;color:#2563eb;margin-left:8px}
     .c-green{border-left-color:var(--green)} .c-green .num{color:var(--green)}
     .c-red{border-left-color:var(--red)} .c-red .num{color:var(--red)}
     .c-amber{border-left-color:var(--amber)} .c-amber .num{color:var(--amber)}
@@ -65,13 +68,35 @@
     th,td{padding:7px 10px;text-align:left;border-bottom:1px solid var(--line)}
     th{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);font-weight:700;position:sticky;top:0;background:#fff}
     td.num,th.num{text-align:right}
-    .tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600}
+    td.num,td.dt{white-space:nowrap}
+    .tag{white-space:nowrap;display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600}
     .tag.tarde{background:#fdecee;color:var(--red)}
     .tablewrap{max-height:380px;overflow:auto;border:1px solid var(--line);border-radius:8px}
     .muted{color:var(--muted)}
     #loading{position:fixed;inset:0;background:rgba(238,241,246,.75);display:flex;align-items:center;justify-content:center;font-weight:600;z-index:50}
     #error{margin:14px 18px;padding:14px 16px;background:#fdecee;border:1px solid #f6b9c1;border-radius:10px;color:#8a1020;white-space:pre-wrap;display:none}
     .footer{padding:22px 18px;color:var(--muted);font-size:12px}
+    /* ---------- Desglose (modal) ---------- */
+    #modal{position:fixed;inset:0;background:rgba(15,33,56,.55);display:none;align-items:center;justify-content:center;z-index:60;padding:20px}
+    #modal .box{background:#fff;border-radius:12px;width:min(1100px,100%);max-height:88vh;display:flex;flex-direction:column;box-shadow:0 20px 50px rgba(0,0,0,.35)}
+    #modal .mhead{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--line)}
+    #modal .mhead h3{margin:0;font-size:16px;flex:1}
+    #modal .mbody{padding:0 18px 14px;overflow:auto}
+    #modal .mfoot{padding:10px 18px;border-top:1px solid var(--line);font-size:12px;color:var(--muted)}
+    .tabs{display:flex;gap:10px;margin:14px 18px 0;flex-wrap:wrap}
+    .tab{display:flex;flex-direction:column;align-items:flex-start;gap:1px;padding:9px 18px;border-radius:10px;border:1px solid var(--line);
+      background:#fff;color:var(--ink);font-size:14px;font-weight:700;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+    .tab small{font-size:11px;font-weight:500;color:var(--muted)}
+    .tab.active{background:var(--navy);border-color:var(--navy);color:#fff}
+    .tab.active small{color:#a9b6c9}
+    tr.pf{cursor:pointer}
+    tr.pf:hover td{background:#f6f8fb}
+    tr.sub td{background:#f8fafc;padding:8px 10px 12px 34px}
+    tr.sub table{font-size:12px;background:#fff;border:1px solid var(--line)}
+    .caret{display:inline-block;width:14px;color:var(--muted)}
+    .tag.ok{background:#e6f6ec;color:var(--green)}
+    .tag.proc{background:#fff3e0;color:var(--amber)}
+    .tag.sc{background:#f1eafe;color:var(--purple)}
   </style>
 </head>
 <body>
@@ -84,8 +109,15 @@
     </div>
     <div class="right">
       <div>Actualizado: <b id="h-updated">—</b></div>
-      <div>Meta de surtido: <b id="h-target">≤ 5 h</b> hábiles</div>
+      <div>Meta de surtido: <b id="h-target">≤ 6 h</b> laborales</div>
+      <div id="h-diag" style="font-size:10px;opacity:.8;margin-top:4px"></div>
     </div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" data-mod="surtido">Tiempo de Surtido<small>medido por línea de producto</small></button>
+    <button class="tab" data-mod="servicio">Nivel de Servicio<small>medido por prefactura</small></button>
+    <button class="tab" data-mod="piezas">Tiempo Surtido por pieza<small>medido por pieza (PZS)</small></button>
   </div>
 
   <div class="filters">
@@ -128,14 +160,8 @@
 
   <!-- Resumen -->
   <div class="section">
-    <p class="section-title">Resumen de solicitudes</p>
+    <p class="section-title"><span id="s-resumen">Resumen de solicitudes</span> <span class="hint">▸ haz clic en una tarjeta para ver el desglose</span></p>
     <div class="cards" id="cards"></div>
-  </div>
-
-  <!-- Tiempos -->
-  <div class="section">
-    <p class="section-title">Tiempos de surtido (minutos hábiles)</p>
-    <div class="cards" id="times"></div>
   </div>
 
   <!-- Indicadores -->
@@ -147,7 +173,7 @@
   <!-- Gráfico -->
   <div class="section">
     <div class="panel">
-      <h3>Evolución semanal: solicitudes dentro / fuera de meta y tiempo promedio</h3>
+      <h3 id="s-chart">Evolución semanal: solicitudes dentro / fuera de meta y tiempo promedio</h3>
       <div class="chartbox"><canvas id="chart"></canvas></div>
       <div id="chart-msg" class="muted" style="display:none;padding:30px;text-align:center"></div>
     </div>
@@ -156,27 +182,73 @@
   <!-- Tabla fuera de meta -->
   <div class="section">
     <div class="panel">
-      <h3>Solicitudes fuera de meta <span class="muted" id="atr-count"></span></h3>
+      <h3><span id="s-tabla">Solicitudes fuera de meta</span> <span class="muted" id="atr-count"></span></h3>
       <div class="tablewrap">
         <table id="tbl">
-          <thead><tr>
-            <th>Prefactura</th><th>Cliente</th><th>Fecha</th><th>Nave</th>
-            <th>Estatus</th><th>Semana</th><th class="num">Tiempo</th><th class="num">Exceso</th>
-          </tr></thead>
+          <thead id="tbl-head"></thead>
           <tbody></tbody>
         </table>
       </div>
     </div>
   </div>
 
-  <div class="footer" id="footer">
-    Cumplimiento = solicitudes entregadas dentro de meta ÷ entregadas con cálculo. Se considera <b>entregada</b> una solicitud con estatus <b>VALIDACION</b> o <b>ENTREGADO</b>.
-    El tiempo cuenta solo horario laboral (L-V 8:30–18:00, sin comida 13:00–14:00).
+  <div class="footer" id="footer"></div>
+
+  <div id="modal">
+    <div class="box">
+      <div class="mhead">
+        <h3 id="m-title">Desglose</h3>
+        <button class="btn ghost" id="m-csv">⬇ Exportar CSV</button>
+        <button class="btn primary" id="m-close">✕ Cerrar</button>
+      </div>
+      <div class="mbody">
+        <table id="m-tbl">
+          <thead id="m-head"></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="mfoot" id="m-foot"></div>
+    </div>
   </div>
 
 <script>
   var CURRENT = null;   // último payload recibido
   var CHART = null;
+  var MODULO = 'surtido';   // 'surtido' = por línea · 'servicio' = por prefactura
+
+  var HORARIO = 'El tiempo cuenta solo horario laboral (L-V 8:30–18:00, sin comida 13:00–14:00). Se omiten las líneas con estatus pausado o cancelado.';
+  var LAB = {
+    surtido: {
+      resumen:'Resumen de solicitudes', total:['Total solicitudes','Registros filtrados'],
+      entregadas:['Entregadas','VALIDACION + ENTREGADO'],
+      dentro:'≤ {h} h laborales', fuera:'> {h} h laborales',
+      enProceso:['En proceso','Aún sin VALIDACION / ENTREGADO'], sinCalculo:['Sin cálculo','Falta hora recibo o surtido'],
+      promedio:'Promedio de surtido', kpiCumpl:'% Cumplimiento',
+      chart:'Evolución semanal: solicitudes dentro / fuera de meta y tiempo promedio', chartY:'Solicitudes',
+      tabla:'Solicitudes fuera de meta', unidad:'solicitudes', csv:'tiempos_surtido.csv',
+      footer:'Cumplimiento = solicitudes (líneas de producto) entregadas dentro de meta ÷ entregadas con cálculo. Se considera <b>entregada</b> una línea con estatus <b>VALIDACION</b> o <b>ENTREGADO</b>. ' + HORARIO
+    },
+    piezas: {
+      resumen:'Resumen de piezas', total:['Total piezas','Piezas filtradas (suma de PZS)'],
+      entregadas:['Entregadas','Piezas en VALIDACION / ENTREGADO'],
+      dentro:'≤ {h} h laborales', fuera:'> {h} h laborales',
+      enProceso:['En proceso','Piezas aún sin VALIDACION / ENTREGADO'], sinCalculo:['Sin cálculo','Piezas sin hora recibo o surtido'],
+      promedio:'Promedio por pieza', kpiCumpl:'% Cumplimiento por pieza',
+      chart:'Evolución semanal: piezas dentro / fuera de meta y tiempo promedio', chartY:'Piezas',
+      tabla:'Líneas fuera de meta', unidad:'piezas', csv:'tiempo_surtido_por_pieza.csv',
+      footer:'Cumplimiento por pieza = piezas (columna PZS) entregadas dentro de meta ÷ piezas entregadas con cálculo. Cada línea pesa tantas piezas como indique su PZS: una línea de 12 piezas fuera de meta cuenta como 12 piezas fuera. El tiempo promedio y la mediana también se ponderan por piezas. Se considera <b>entregada</b> una línea con estatus <b>VALIDACION</b> o <b>ENTREGADO</b>. ' + HORARIO
+    },
+    servicio: {
+      resumen:'Resumen de prefacturas', total:['Total prefacturas','Prefacturas filtradas'],
+      entregadas:['Entregadas','Todas sus líneas en VALIDACION / ENTREGADO'],
+      dentro:'Todas sus líneas ≤ {h} h laborales', fuera:'Alguna línea > {h} h laborales',
+      enProceso:['En proceso','Con líneas aún sin entregar'], sinCalculo:['Sin cálculo','Líneas sin hora recibo o surtido'],
+      promedio:'Promedio por prefactura', kpiCumpl:'% Nivel de servicio',
+      chart:'Evolución semanal: prefacturas dentro / fuera de meta y tiempo promedio', chartY:'Prefacturas',
+      tabla:'Prefacturas fuera de meta', unidad:'prefacturas', csv:'nivel_servicio.csv',
+      footer:'Nivel de servicio = prefacturas cuyas líneas (productos) se surtieron <b>todas</b> en ≤ meta ÷ prefacturas con cálculo. Una prefactura queda <b>fuera de meta</b> en cuanto alguna de sus líneas rebasa la meta; <b>en proceso</b> si aún le faltan líneas por entregar; <b>sin cálculo</b> si una línea entregada no tiene hora de recibo o de surtido. Su tiempo es el de su línea más tardada. ' + HORARIO
+    }
+  };
 
   function $(id){ return document.getElementById(id); }
   function show(el,on){ el.style.display = on ? '' : 'none'; }
@@ -187,6 +259,11 @@
     if(!isNum(m) || m < 0) return '—';
     var h = Math.floor(m/60), mm = Math.round(m%60);
     return h > 0 ? (h + ' h ' + mm + ' m') : (mm + ' min');
+  }
+  // minutos -> horas con un decimal (p.ej. 304 min = "5.1 h"); -1 / vacío = "—"
+  function fmtHoras(m){
+    if(!isNum(m) || m < 0) return '—';
+    return (m/60).toLocaleString('es-MX', {minimumFractionDigits:1, maximumFractionDigits:1}) + ' h';
   }
   function fmtNum(n){ return (!isNum(n) || n < 0) ? '—' : n.toLocaleString('es-MX'); }
 
@@ -206,7 +283,7 @@
     google.script.run
       .withSuccessHandler(onData)
       .withFailureHandler(onFail)
-      .getDashboard(getFilters());
+      .getDashboard(getFilters(), MODULO);
   }
 
   function showError(msg){
@@ -220,16 +297,25 @@
   });
 
   function onData(d){
+    if(d && d.meta && d.meta.modulo !== MODULO) return;   // respuesta de la otra pestaña: se ignora
     show($('loading'), false);
     if(d && d.error){ showError(d.error); return; }
     show($('error'), false);
     CURRENT = d;
+    renderLabels();
+    if (MODULO === 'piezas' && d.meta.sinPzs) {
+      $('footer').innerHTML += '<br><b>' + d.meta.sinPzs.toLocaleString('es-MX') + '</b> línea(s) sin PZS no se consideran en este módulo.';
+    }
 
     // Header
     $('h-title').textContent = d.meta.title;
     $('h-sub').textContent   = d.meta.subtitle;
     $('h-updated').textContent = d.meta.updated;
     $('h-target').textContent  = '≤ ' + d.meta.slaHours + ' h';
+    if (d.meta.diag) {
+      $('h-diag').textContent = d.meta.diag.rows + ' filas · lectura hoja: ' + (d.meta.diag.readMs/1000).toFixed(1) +
+        's · total: ' + (d.meta.diag.totalMs/1000).toFixed(1) + 's';
+    }
 
     // Opciones de filtro (sin perder la selección actual)
     fillSelect($('f-anio'), 'todos', d.options.anios, 'Todos');
@@ -238,11 +324,26 @@
     fillSelect($('f-estatus'), 'todos', d.options.estatus, 'Todos');
 
     renderCards(d.kpis, d.meta);
-    renderTimes(d.kpis);
     renderKpis(d.kpis, d.meta);
     renderTable(d.atrasos, d.atrasosTotal);
     try { renderChart(d.weekly, d.meta); }
     catch(e){ chartMsg('No se pudo dibujar la gráfica: ' + e.message); }
+  }
+
+  function renderLabels(){
+    var L = LAB[MODULO];
+    $('s-resumen').textContent = L.resumen;
+    $('s-chart').textContent   = L.chart;
+    $('s-tabla').textContent   = L.tabla;
+    $('footer').innerHTML      = L.footer;
+    [].forEach.call(document.querySelectorAll('.tab'), function(b){
+      b.className = 'tab' + (b.getAttribute('data-mod') === MODULO ? ' active' : '');
+    });
+    $('tbl-head').innerHTML = MODULO === 'servicio'
+      ? '<tr><th>Prefactura</th><th>Cliente</th><th>Recibo</th><th>Surtido</th><th class="num">Líneas</th><th class="num">Líneas fuera</th><th>Semana</th><th class="num">Tiempo laboral</th><th class="num">Exceso</th></tr>'
+      : MODULO === 'piezas'
+      ? '<tr><th>Prefactura</th><th>Cliente</th><th>Descripción</th><th class="num">Pzs</th><th>Recibo</th><th>Surtido</th><th>Semana</th><th class="num">Tiempo laboral</th><th class="num">Exceso</th></tr>'
+      : '<tr><th>Prefactura</th><th>Cliente</th><th>Recibo</th><th>Surtido</th><th>Nave</th><th>Estatus</th><th>Semana</th><th class="num">Tiempo laboral</th><th class="num">Exceso</th></tr>';
   }
 
   function fillSelect(sel, allVal, items, allLabel, isPair){
@@ -257,29 +358,27 @@
     if([].some.call(sel.options,function(o){return o.value===prev;})) sel.value = prev;
   }
 
-  function card(cls,num,cap,desc){
-    return '<div class="card '+cls+'"><div class="num">'+num+'</div>'+
-           '<div class="cap">'+cap+'</div><div class="desc">'+desc+'</div></div>';
+  function card(cls,num,cap,desc,key){
+    return '<div class="card '+cls+(key?' click':'')+'"'+(key?' data-cat="'+key+'" data-cap="'+cap+'"':'')+'>'+
+           '<div class="num">'+num+'</div><div class="cap">'+cap+'</div><div class="desc">'+desc+'</div></div>';
   }
   function renderCards(k, meta){
-    var h='';
-    h+=card('c-ink',    fmtNum(k.total),      'Total solicitudes',  'Registros filtrados');
-    h+=card('c-blue',   fmtNum(k.entregadas), 'Entregadas',         'VALIDACION + ENTREGADO');
-    h+=card('c-green',  fmtNum(k.dentro),     'Dentro de meta',     '≤ '+meta.slaHours+' h hábiles');
-    h+=card('c-red',    fmtNum(k.fuera),      'Fuera de meta',      '> '+meta.slaHours+' h hábiles');
-    h+=card('c-amber',  fmtNum(k.enProceso),  'En proceso',         'Otro estatus (ej. pausado)');
-    h+=card('c-purple', fmtNum(k.sinCalculo), 'Sin cálculo',        'Falta hora recibo o surtido');
+    var L = LAB[MODULO], h = '';
+    h+=card('c-ink',    fmtNum(k.total),      L.total[0],      L.total[1], 'total');
+    h+=card('c-blue',   fmtNum(k.entregadas), L.entregadas[0], L.entregadas[1], 'entregadas');
+    h+=card('c-green',  fmtNum(k.dentro),     'Dentro de meta', L.dentro.replace('{h}', meta.slaHours), 'dentro');
+    h+=card('c-red',    fmtNum(k.fuera),      'Fuera de meta',  L.fuera.replace('{h}', meta.slaHours), 'fuera');
+    h+=card('c-amber',  fmtNum(k.enProceso),  L.enProceso[0],  L.enProceso[1], 'enProceso');
+    h+=card('c-purple', fmtNum(k.sinCalculo), L.sinCalculo[0], L.sinCalculo[1], 'sinCalculo');
+    h+=card('c-teal',   fmtHoras(k.prom), L.promedio, isNum(k.prom) && k.prom >= 0 ? fmtMin(k.prom)+' laborales' : 'Sin datos con cálculo');
     $('cards').innerHTML=h;
+    [].forEach.call($('cards').querySelectorAll('.card.click'), function(el){
+      el.addEventListener('click', function(){
+        openDetail(el.getAttribute('data-cat'), el.getAttribute('data-cap'),
+                   el.querySelector('.num').textContent);
+      });
+    });
   }
-  function renderTimes(k){
-    var h='';
-    h+=card('c-teal',   fmtNum(k.prom),    'Promedio', fmtMin(k.prom));
-    h+=card('c-blue',   fmtNum(k.mediana), 'Mediana',  fmtMin(k.mediana));
-    h+=card('c-green',  fmtNum(k.min),     'Mínimo',   fmtMin(k.min));
-    h+=card('c-red',    fmtNum(k.max),     'Máximo',   fmtMin(k.max));
-    $('times').innerHTML=h;
-  }
-
   function kpiBlock(pct,name,formula,col){
     return '<div class="kpi" style="border-top-color:'+col+'">'+
       '<div class="big" style="color:'+col+'">'+pct+'%</div>'+
@@ -289,7 +388,7 @@
   }
   function renderKpis(k, meta){
     var h='';
-    h+=kpiBlock(k.pctCumpl,  '% Cumplimiento (≤ '+meta.slaHours+' h)', 'Dentro de meta ÷ Con cálculo ('+k.dentro+' ÷ '+k.conCalculo+')', 'var(--green)');
+    h+=kpiBlock(k.pctCumpl,  LAB[MODULO].kpiCumpl+' (≤ '+meta.slaHours+' h)', 'Dentro de meta ÷ Con cálculo ('+k.dentro+' ÷ '+k.conCalculo+')', 'var(--green)');
     h+=kpiBlock(k.pctFuera,  '% Fuera de meta (> '+meta.slaHours+' h)', 'Fuera de meta ÷ Con cálculo ('+k.fuera+' ÷ '+k.conCalculo+')', 'var(--red)');
     h+=kpiBlock(k.pctSinCalc,'% Sin cálculo', 'Sin cálculo ÷ Total ('+k.sinCalculo+' ÷ '+k.total+')', 'var(--purple)');
     h+=kpiBlock(k.pctAvance, '% Avance de entrega', 'Entregadas ÷ Total ('+k.entregadas+' ÷ '+k.total+')', 'var(--blue)');
@@ -305,7 +404,7 @@
   function renderChart(weekly, meta){
     if(CHART){ CHART.destroy(); CHART = null; }
     if(typeof Chart === 'undefined'){ chartMsg('No se pudo cargar la librería de gráficas (Chart.js).'); return; }
-    if(!weekly.length){ chartMsg('No hay solicitudes entregadas con tiempo calculado para graficar.'); return; }
+    if(!weekly.length){ chartMsg('No hay '+LAB[MODULO].unidad+' entregadas con tiempo calculado para graficar.'); return; }
     chartMsg('');
 
     var labels = weekly.map(function(w){return w.label;});
@@ -331,7 +430,7 @@
             return c.dataset.yAxisID==='y1' ? c.dataset.label+': '+fmtMin(v) : c.dataset.label+': '+v;
           }}}},
         scales:{
-          y:{position:'left',stacked:true,min:0,ticks:{precision:0,font:{size:11}},grid:{color:'#eef0f3'},title:{display:true,text:'Solicitudes',font:{size:10}}},
+          y:{position:'left',stacked:true,min:0,ticks:{precision:0,font:{size:11}},grid:{color:'#eef0f3'},title:{display:true,text:LAB[MODULO].chartY,font:{size:10}}},
           y1:{position:'right',min:0,grid:{drawOnChartArea:false},ticks:{font:{size:11}},title:{display:true,text:'Minutos',font:{size:10}}},
           x:{stacked:true,grid:{display:false},ticks:{font:{size:11}}}
         }
@@ -340,40 +439,155 @@
   }
 
   function renderTable(rows, total){
-    $('atr-count').textContent = '('+total+')';
+    $('atr-count').textContent = MODULO === 'piezas' && CURRENT
+      ? '('+total+' líneas · '+(CURRENT.atrasosPzs||0).toLocaleString('es-MX')+' piezas)' : '('+total+')';
     var tb = $('tbl').querySelector('tbody');
-    if(!rows.length){ tb.innerHTML='<tr><td colspan="8" class="muted">Sin solicitudes fuera de meta para el filtro seleccionado.</td></tr>'; return; }
+    if(!rows.length){ tb.innerHTML='<tr><td colspan="9" class="muted">Sin '+LAB[MODULO].unidad+' fuera de meta para el filtro seleccionado.</td></tr>'; return; }
     tb.innerHTML = rows.map(function(r){
-      return '<tr><td>'+esc(r.no)+'</td><td>'+esc(r.cte)+'</td><td>'+esc(r.fecha)+'</td><td>'+esc(r.nave)+'</td>'+
-        '<td>'+esc(r.estatus)+'</td><td>'+esc(r.semana)+'</td>'+
-        '<td class="num"><span class="tag tarde">'+fmtMin(r.min)+'</span></td>'+
-        '<td class="num">+'+fmtMin(r.exceso)+'</td></tr>';
+      var tiempo = '<td class="num"><span class="tag tarde">'+fmtMin(r.min)+'</span></td><td class="num">+'+fmtMin(r.exceso)+'</td></tr>';
+      if(MODULO === 'piezas'){
+        return '<tr><td>'+esc(r.no)+'</td><td>'+esc(r.cte)+'</td><td>'+esc(r.desc)+'</td><td class="num">'+r.pzs+'</td>'+
+          '<td class="dt">'+esc(r.recibo)+'</td><td class="dt">'+esc(r.surtido)+'</td><td>'+esc(r.semana)+'</td>' + tiempo;
+      }
+      var pre = '<tr><td>'+esc(r.no)+'</td><td>'+esc(r.cte)+'</td><td class="dt">'+esc(r.recibo)+'</td><td class="dt">'+esc(r.surtido)+'</td>';
+      var mid = MODULO === 'servicio'
+        ? '<td class="num">'+r.lineas+'</td><td class="num">'+r.lineasFuera+'</td><td>'+esc(r.semana)+'</td>'
+        : '<td>'+esc(r.nave)+'</td><td>'+esc(r.estatus)+'</td><td>'+esc(r.semana)+'</td>';
+      return pre + mid + tiempo;
     }).join('');
     if(total > rows.length){
-      tb.innerHTML += '<tr><td colspan="8" class="muted">Mostrando '+rows.length+' de '+total+' (exporta el CSV para ver todo).</td></tr>';
+      tb.innerHTML += '<tr><td colspan="9" class="muted">Mostrando '+rows.length+' de '+total+' (exporta el CSV para ver todo).</td></tr>';
     }
   }
 
   function exportCsv(){
-    if(!CURRENT || !CURRENT.detalle){ return; }
-    var head = ['Prefactura','Cliente','Fecha','Nave','Estatus','Semana','Tiempo (min)','Resultado'];
-    var lines = [head.join(',')];
-    CURRENT.detalle.forEach(function(r){
-      var row=[r.no,r.cte,r.fecha,r.nave,r.estatus,r.semana,r.min,r.resultado].map(function(v){
-        v=String(v==null?'':v); return /[",\n]/.test(v)?('"'+v.replace(/"/g,'""')+'"'):v;
+    var btn = $('btn-csv'); btn.disabled = true; btn.textContent = 'Generando…';
+    function done(){ btn.disabled = false; btn.textContent = '⬇ Exportar CSV'; }
+    google.script.run
+      .withSuccessHandler(function(rows){ done(); downloadCsv(rows); })
+      .withFailureHandler(function(err){ done(); onFail(err); })
+      .getDetalle(getFilters(), 'total', MODULO);
+  }
+
+  // ---- Desglose de una tarjeta ----
+  var DETAIL = { cat:null, rows:[], title:'' };
+  var DETAIL_MAX = 500;
+
+  function openDetail(cat, cap, count){
+    DETAIL = { cat:cat, rows:[], title:cap };
+    $('m-title').textContent = cap + ' — ' + count;
+    $('m-foot').textContent = 'Cargando desglose…';
+    $('m-tbl').querySelector('tbody').innerHTML = '';
+    $('modal').style.display = 'flex';
+    google.script.run
+      .withSuccessHandler(function(rows){ if(DETAIL.cat===cat){ DETAIL.rows = rows; renderDetail(); } })
+      .withFailureHandler(function(err){ $('m-foot').textContent = 'Error: ' + (err && err.message ? err.message : err); })
+      .getDetalle(getFilters(), cat, MODULO);
+  }
+
+  function resCls(res){
+    return res==='Dentro de meta' ? 'ok' : res==='Fuera de meta' ? 'tarde' : res==='En proceso' ? 'proc' : 'sc';
+  }
+  function resTag(res){ return '<span class="tag '+resCls(res)+'">'+esc(res)+'</span>'; }
+
+  function renderDetail(){
+    var rows = DETAIL.rows, tb = $('m-tbl').querySelector('tbody');
+    var servicio = MODULO === 'servicio';
+    $('m-head').innerHTML = servicio
+      ? '<tr><th></th><th>Prefactura</th><th>Cliente</th><th>Recibo</th><th>Surtido</th><th class="num">Líneas</th><th class="num">Fuera</th><th>Semana</th><th class="num">Tiempo laboral</th><th>Resultado</th></tr>'
+      : '<tr><th>Prefactura</th><th>Cliente</th><th>Descripción</th><th>Recibo</th><th>Surtido</th><th>Nave</th><th>Estatus</th><th>Semana</th><th class="num">Tiempo laboral</th><th>Resultado</th></tr>';
+    var cols = servicio ? 10 : 10;
+    if(!rows.length){ tb.innerHTML = '<tr><td colspan="'+cols+'" class="muted">Sin '+(MODULO==='piezas'?'líneas':LAB[MODULO].unidad)+'.</td></tr>'; $('m-foot').textContent=''; return; }
+
+    var shown = rows.slice(0, DETAIL_MAX);
+    tb.innerHTML = shown.map(function(r, i){
+      if(servicio){
+        return '<tr class="pf" data-i="'+i+'"><td><span class="caret">▸</span></td><td>'+esc(r.no)+'</td><td>'+esc(r.cte)+'</td>'+
+          '<td class="dt">'+esc(r.recibo)+'</td><td class="dt">'+esc(r.surtido)+'</td>'+
+          '<td class="num">'+r.nLineas+'</td><td class="num">'+r.nFuera+'</td><td>'+esc(r.semana)+'</td>'+
+          '<td class="num">'+(r.min===''?'—':fmtMin(r.min))+'</td><td>'+resTag(r.resultado)+'</td></tr>';
+      }
+      return '<tr><td>'+esc(r.no)+'</td><td>'+esc(r.cte)+'</td><td>'+esc(r.desc)+(r.pzs!==''?' <span class="muted">('+esc(r.pzs)+' pzs)</span>':'')+'</td>'+
+        '<td class="dt">'+esc(r.recibo)+'</td><td class="dt">'+esc(r.surtido)+'</td><td>'+esc(r.nave)+'</td>'+
+        '<td>'+esc(r.estatus)+'</td><td>'+esc(r.semana)+'</td><td class="num">'+(r.min===''?'—':fmtMin(r.min))+'</td>'+
+        '<td>'+resTag(r.resultado)+'</td></tr>';
+    }).join('');
+
+    if(servicio){
+      [].forEach.call(tb.querySelectorAll('tr.pf'), function(tr){
+        tr.addEventListener('click', function(){ toggleLines(tr, shown[+tr.getAttribute('data-i')]); });
       });
-      lines.push(row.join(','));
+    }
+    var u = LAB[MODULO].unidad;
+    if(MODULO === 'piezas'){
+      var pz = rows.reduce(function(t, r){ return t + (parseFloat(r.pzs) || 0); }, 0);
+      $('m-foot').textContent = rows.length.toLocaleString('es-MX') + ' líneas · ' + pz.toLocaleString('es-MX') + ' piezas' +
+        (rows.length > DETAIL_MAX ? ' (se muestran '+DETAIL_MAX+' líneas; exporta el CSV para ver todas).' : '.');
+      return;
+    }
+    $('m-foot').textContent = (rows.length > DETAIL_MAX
+      ? 'Mostrando '+DETAIL_MAX+' de '+rows.length.toLocaleString('es-MX')+' '+u+' (exporta el CSV para ver todas).'
+      : rows.length.toLocaleString('es-MX')+' '+u+'.') + (servicio ? ' Haz clic en una prefactura para ver sus líneas.' : '');
+  }
+
+  // Nivel de Servicio: despliega / oculta las líneas (productos) de una prefactura
+  function toggleLines(tr, p){
+    var next = tr.nextElementSibling;
+    if(next && next.classList.contains('sub')){
+      next.parentNode.removeChild(next);
+      tr.querySelector('.caret').textContent = '▸';
+      return;
+    }
+    var html = '<table><thead><tr><th>Descripción</th><th class="num">Pzs</th><th>Estatus</th><th>Recibo</th><th>Surtido</th><th class="num">Tiempo laboral</th><th>Resultado</th></tr></thead><tbody>' +
+      p.lineas.map(function(l){
+        return '<tr><td>'+esc(l.desc)+'</td><td class="num">'+esc(l.pzs)+'</td><td>'+esc(l.estatus)+'</td>'+
+          '<td class="dt">'+esc(l.recibo)+'</td><td class="dt">'+esc(l.surtido)+'</td>'+
+          '<td class="num">'+(l.min===''?'—':fmtMin(l.min))+'</td><td>'+resTag(l.resultado)+'</td></tr>';
+      }).join('') + '</tbody></table>';
+    var sub = document.createElement('tr');
+    sub.className = 'sub';
+    sub.innerHTML = '<td colspan="10">'+html+'</td>';
+    tr.parentNode.insertBefore(sub, tr.nextSibling);
+    tr.querySelector('.caret').textContent = '▾';
+  }
+
+  function closeDetail(){ $('modal').style.display = 'none'; DETAIL.cat = null; }
+
+  function downloadCsv(rows){
+    var servicio = MODULO === 'servicio';
+    var head = servicio
+      ? ['Prefactura','Cliente','Recibo','Surtido','Líneas','Líneas dentro','Líneas fuera','Líneas en proceso','Líneas sin cálculo','Semana','Tiempo laboral (min)','Resultado']
+      : ['Prefactura','Cliente','Descripción','Pzs','Recibo','Surtido','Nave','Estatus','Semana','Tiempo laboral (min)','Resultado'];
+    var lines = [head.join(',')];
+    rows.forEach(function(r){
+      var row = servicio
+        ? [r.no,r.cte,r.recibo,r.surtido,r.nLineas,r.nLineas-r.nFuera-r.nProceso-r.nSinCalc,r.nFuera,r.nProceso,r.nSinCalc,r.semana,r.min,r.resultado]
+        : [r.no,r.cte,r.desc,r.pzs,r.recibo,r.surtido,r.nave,r.estatus,r.semana,r.min,r.resultado];
+      lines.push(row.map(function(v){
+        v=String(v==null?'':v); return /[",\n]/.test(v)?('"'+v.replace(/"/g,'""')+'"'):v;
+      }).join(','));
     });
-    var blob = new Blob(['﻿'+lines.join('\r\n')], {type:'text/csv;charset=utf-8;'});
+    var blob = new Blob(['\uFEFF'+lines.join('\r\n')], {type:'text/csv;charset=utf-8;'});
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'tiempos_surtido.csv';
+    a.download = LAB[MODULO].csv;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
   }
 
   // Eventos
+  [].forEach.call(document.querySelectorAll('.tab'), function(b){
+    b.addEventListener('click', function(){
+      var m = b.getAttribute('data-mod');
+      if(m === MODULO) return;
+      MODULO = m; closeDetail(); renderLabels(); load();
+    });
+  });
   $('btn-update').addEventListener('click', load);
   $('btn-csv').addEventListener('click', exportCsv);
+  $('m-close').addEventListener('click', closeDetail);
+  $('m-csv').addEventListener('click', function(){ if(DETAIL.rows.length) downloadCsv(DETAIL.rows); });
+  $('modal').addEventListener('click', function(e){ if(e.target === $('modal')) closeDetail(); });
+  document.addEventListener('keydown', function(e){ if(e.key === 'Escape') closeDetail(); });
   ['f-anio','f-mes','f-semana','f-nave','f-estatus'].forEach(function(id){
     $(id).addEventListener('change', load);
   });
@@ -384,6 +598,7 @@
   });
 
   // Carga inicial
+  renderLabels();
   load();
 </script>
 </body>
