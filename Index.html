@@ -260,7 +260,7 @@
   var MODULO = 'surtido';   // 'surtido' = por línea · 'servicio' = por prefactura
 
   var HORARIO = 'El tiempo cuenta solo horario laboral (L-V 8:30–18:00, sin comida 13:00–14:00). Se omiten las líneas con estatus pausado o cancelado. ' +
-    '<b>No se suponen fechas:</b> si falta o es inválida una fecha u hora de surtido, la línea queda en "Sin cálculo" y aparece en la alerta de fechas por corregir.';
+    '<b>No se suponen fechas ni horas:</b> si falta o es inválida una fecha u hora, o si el TURNO es TARDE pero la HORA RECIBO es a.m., la línea queda en "Sin cálculo" y aparece en la alerta de datos por corregir.';
   var LAB = {
     surtido: {
       resumen:'Resumen de solicitudes', total:['Total solicitudes','Registros filtrados'],
@@ -385,8 +385,8 @@
     $('al-title').textContent = a.n.toLocaleString('es-MX') + ' línea(s) en ' + a.prefacturas.toLocaleString('es-MX') +
       ' prefactura(s) con fechas u horas por corregir';
     var porTipo = {};
-    ALERT_ITEMS.forEach(function(x){ var k = x.texto.replace(/\s*\(\d+\)/, ''); porTipo[k] = (porTipo[k]||0) + 1; });
-    $('al-sub').textContent = 'No se calcularon (quedan en "Sin cálculo"); el tablero no supone ninguna fecha. Corrígelas en la hoja origen. ' +
+    ALERT_ITEMS.forEach(function(x){ var k = x.texto.replace(/\s*\(\d+\)/, ''); if(x.campo.indexOf('HORA RECIBO /') === 0) k = 'TURNO TARDE con HORA RECIBO a.m.'; porTipo[k] = (porTipo[k]||0) + 1; });
+    $('al-sub').textContent = 'Las líneas entregadas con estos errores no se calculan (quedan en "Sin cálculo") hasta que se corrijan; el tablero no supone ninguna fecha ni hora. Corrígelas en la hoja origen. ' +
       Object.keys(porTipo).map(function(k){ return porTipo[k] + ' × ' + k; }).join(' · ');
     $('al-tbl').querySelector('tbody').innerHTML = ALERT_ITEMS.map(function(x){
       return '<tr><td><b>'+esc(x.no)+'</b></td><td class="num">'+x.fila+'</td><td>'+esc(x.cte)+'</td><td>'+esc(x.desc)+'</td>'+

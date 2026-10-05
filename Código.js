@@ -37,6 +37,12 @@ var ENTREGADO_ESTATUS = ['validacion', 'entregado'];
 // Estatus (normalizados) que se omiten por completo: no cuentan en ningún indicador ni filtro
 var EXCLUIR_ESTATUS = ['cancelado', 'cancelada', 'pausado', 'pausada'];
 
+// TURNO = TARDE con HORA RECIBO en a.m. (p. ej. 1:56 a.m. en vez de p.m.): casi seguro es un error de captura.
+// true  = la línea NO se calcula hasta que se corrija (se alerta con su PF)  <- recomendado: con esa hora el
+//         tiempo se mediría desde las 8:30 y saldría inflado.
+// false = se calcula con la hora tal como está capturada, y solo se alerta.
+var EXCLUIR_TURNO_INCONSISTENTE = true;
+
 // Ventana laboral del día (horas locales)
 var WORKDAY_SEGMENTS = [
   { startH: 8, startM: 30, endH: 13, endM: 0 },  // mañana
@@ -217,12 +223,21 @@ function valTxt_(v) {
 // Solo se calcula si FECHA, HORA RECIBO, FECHA DE SURTIDO y HORA DE SURTIDO están completas y son
 // coherentes. Si algo falta o está mal, no se calcula y se devuelve el "problema" con el valor
 // capturado, para avisar qué se debe corregir en la hoja.
-function evalTiempo_(fechaDt, rawHRec, rawHSur, rawFSur) {
+function evalTiempo_(fechaDt, rawHRec, rawHSur, rawFSur, turno) {
   var r = { tiempoMin: null, cumple: null, startDT: null, endDT: null, surtidoTxt: '', problema: null };
   var tR = parseTimeCell_(rawHRec), tS = parseTimeCell_(rawHSur);
   if (tR) r.startDT = combineDateTime_(fechaDt, tR);
   var horaSur = tS ? (' ' + ('0' + tS.h).slice(-2) + ':' + ('0' + tS.m).slice(-2)) : '';
   function prob(codigo, campo, valor, texto) { r.problema = { codigo: codigo, campo: campo, valor: valor, texto: texto }; return r; }
+
+  // 0) TURNO contra la hora de recibo: TARDE con hora en a.m. = error de captura (solo necesita HORA RECIBO,
+  //    así que avisa desde la captura, aunque la línea todavía no tenga surtido)
+  if (EXCLUIR_TURNO_INCONSISTENTE && normalize_(turno) === 'tarde' && tR.h < 12) {
+    var hh12 = tR.h === 0 ? 12 : tR.h;
+    r.surtidoTxt = tS ? valTxt_(rawFSur) + horaSur : '';
+    return prob('turno', 'HORA RECIBO / TURNO', hh12 + ':' + ('0' + tR.m).slice(-2) + ' a.m. con TURNO ' + String(turno).trim().toUpperCase(),
+                'El TURNO es TARDE pero la HORA RECIBO es a.m.: revisa si la hora debía ser p.m. (o si el turno está mal)');
+  }
 
   // 1) horas
   if (!tR || !tS) {
@@ -291,6 +306,7 @@ function buildRecords_() {
   var cHSur  = findCol_(nh, ['hora de surtido']);
   var cEstA  = findCol_(nh, ['estatus almacen']);
   var cEstE  = findCol_(nh, ['estatus de entrega']);
+  var cTurno = findCol_(nh, ['turno']);                      // opcional: valida TARDE contra a.m./p.m. de HORA RECIBO
   var cEstR  = findCol_(nh, ['estatus real']);               // opcional: solo para omitir cancelados/pausados
   var cSem   = findCol_(nh, ['semana']);                     // opcional: si no existe se calcula de la fecha
   var cDesc  = findCol_(nh, ['descripcion']);                // opcional: solo para el desglose por prefactura
@@ -338,7 +354,7 @@ function buildRecords_() {
         continue;
       }
 
-      var ev = evalTiempo_(fechaDt, row[cHRec], row[cHSur], cFSur >= 0 ? row[cFSur] : '');
+      var ev = evalTiempo_(fechaDt, row[cHRec], row[cHSur], cFSur >= 0 ? row[cFSur] : '', cTurno >= 0 ? row[cTurno] : '');
       var tiempoMin = ev.tiempoMin, cumple = ev.cumple;
 
       var nave = cNave >= 0 ? row[cNave] : '';
@@ -631,7 +647,7 @@ function getDashboard(filters, modulo) {
   // Alerta de fechas / horas por corregir: líneas entregadas que NO se pudieron calcular por un dato faltante o inválido.
   // Respeta los filtros; las de FECHA (recibo) inválida no se pueden ubicar, así que siempre se listan.
   var alertItems = filterUnits_(recs, filters).filtered
-    .filter(function (r) { return r.entregado && r.problema; })
+    .filter(function (r) { return r.problema && (r.entregado || r.problema.codigo === 'turno'); })
     .map(function (r) {
       return { no: r.prefactura, fila: r.fila, cte: r.cliente, desc: r.descripcion,
                campo: r.problema.campo, valor: r.problema.valor, texto: r.problema.texto, recibo: r.recibo };
@@ -698,7 +714,7 @@ function detalleRows_(units, cat, modulo) {
       recibo: r.recibo, surtido: r.surtido,
       min: typeof r.tiempoMin === 'number' ? r.tiempoMin : '',
       resultado: CAT_TEXT_[r.cat],
-      motivo: (r.problema && r.entregado) ? (r.problema.campo + ': ' + r.problema.valor) : ''
+      motivo: (r.problema && (r.entregado || r.problema.codigo === 'turno')) ? (r.problema.campo + ': ' + r.problema.valor) : ''
     };
   }
 
