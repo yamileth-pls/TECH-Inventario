@@ -94,6 +94,13 @@
     tr.sub td{background:#f8fafc;padding:8px 10px 12px 34px}
     tr.sub table{font-size:12px;background:#fff;border:1px solid var(--line)}
     .caret{display:inline-block;width:14px;color:var(--muted)}
+    .alertbar{margin:14px 18px 0;background:#fff8e6;border:1px solid #f3d38a;border-left:5px solid var(--amber);border-radius:10px;padding:12px 14px}
+    .alert-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+    .alert-ico{font-size:22px;line-height:1}
+    .alert-title{flex:1;min-width:260px;font-size:13px;line-height:1.45}
+    .alert-title .sub2{color:var(--muted);font-size:12px}
+    #al-body{margin-top:10px}
+    #al-tbl td.val{color:var(--red);font-weight:700;font-family:ui-monospace,Menlo,monospace;font-size:12px;white-space:nowrap}
     .tag.ok{background:#e6f6ec;color:var(--green)}
     .tag.proc{background:#fff3e0;color:var(--amber)}
     .tag.sc{background:#f1eafe;color:var(--purple)}
@@ -158,10 +165,46 @@
 
   <div id="error"></div>
 
+  <!-- Alerta: fechas / horas por corregir -->
+  <div class="alertbar" id="alert-banner" style="display:none">
+    <div class="alert-head">
+      <span class="alert-ico">⚠️</span>
+      <div class="alert-title">
+        <b id="al-title"></b>
+        <div class="sub2" id="al-sub"></div>
+      </div>
+      <button class="btn ghost" id="al-toggle">Ver PF por corregir ▾</button>
+      <button class="btn ghost" id="al-csv">⬇ CSV</button>
+    </div>
+    <div id="al-body" style="display:none">
+      <div class="tablewrap" style="max-height:360px">
+        <table id="al-tbl">
+          <thead><tr><th>PF (Columna 1)</th><th class="num">Fila</th><th>Cliente</th><th>Descripción</th><th>Campo</th><th>Valor capturado</th><th>Qué corregir</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="muted" id="al-foot" style="font-size:12px;margin-top:6px"></div>
+    </div>
+  </div>
+
   <!-- Resumen -->
   <div class="section">
     <p class="section-title"><span id="s-resumen">Resumen de solicitudes</span> <span class="hint">▸ haz clic en una tarjeta para ver el desglose</span></p>
     <div class="cards" id="cards"></div>
+  </div>
+
+  <!-- Resultados de la búsqueda (solo si hay texto en "Buscar") -->
+  <div class="section" id="sec-search" style="display:none">
+    <div class="panel">
+      <h3><span>Resultados de la búsqueda</span> <span class="muted" id="srch-count"></span></h3>
+      <div class="tablewrap">
+        <table id="srch-tbl">
+          <thead id="srch-head"></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="muted" id="srch-foot" style="font-size:12px;margin-top:6px"></div>
+    </div>
   </div>
 
   <!-- Indicadores -->
@@ -216,13 +259,14 @@
   var CHART = null;
   var MODULO = 'surtido';   // 'surtido' = por línea · 'servicio' = por prefactura
 
-  var HORARIO = 'El tiempo cuenta solo horario laboral (L-V 8:30–18:00, sin comida 13:00–14:00). Se omiten las líneas con estatus pausado o cancelado.';
+  var HORARIO = 'El tiempo cuenta solo horario laboral (L-V 8:30–18:00, sin comida 13:00–14:00). Se omiten las líneas con estatus pausado o cancelado. ' +
+    '<b>No se suponen fechas:</b> si falta o es inválida una fecha u hora de surtido, la línea queda en "Sin cálculo" y aparece en la alerta de fechas por corregir.';
   var LAB = {
     surtido: {
       resumen:'Resumen de solicitudes', total:['Total solicitudes','Registros filtrados'],
       entregadas:['Entregadas','VALIDACION + ENTREGADO'],
       dentro:'≤ {h} h laborales', fuera:'> {h} h laborales',
-      enProceso:['En proceso','Aún sin VALIDACION / ENTREGADO'], sinCalculo:['Sin cálculo','Falta hora recibo o surtido'],
+      enProceso:['En proceso','Aún sin VALIDACION / ENTREGADO'], sinCalculo:['Sin cálculo','Fecha u hora faltante o inválida (ver alerta)'],
       promedio:'Promedio de surtido', kpiCumpl:'% Cumplimiento',
       chart:'Evolución semanal: solicitudes dentro / fuera de meta y tiempo promedio', chartY:'Solicitudes',
       tabla:'Solicitudes fuera de meta', unidad:'solicitudes', csv:'tiempos_surtido.csv',
@@ -232,7 +276,7 @@
       resumen:'Resumen de piezas', total:['Total piezas','Piezas filtradas (suma de PZS)'],
       entregadas:['Entregadas','Piezas en VALIDACION / ENTREGADO'],
       dentro:'≤ {h} h laborales', fuera:'> {h} h laborales',
-      enProceso:['En proceso','Piezas aún sin VALIDACION / ENTREGADO'], sinCalculo:['Sin cálculo','Piezas sin hora recibo o surtido'],
+      enProceso:['En proceso','Piezas aún sin VALIDACION / ENTREGADO'], sinCalculo:['Sin cálculo','Piezas con fecha u hora por corregir'],
       promedio:'Promedio por pieza', kpiCumpl:'% Cumplimiento por pieza',
       chart:'Evolución semanal: piezas dentro / fuera de meta y tiempo promedio', chartY:'Piezas',
       tabla:'Líneas fuera de meta', unidad:'piezas', csv:'tiempo_surtido_por_pieza.csv',
@@ -242,11 +286,11 @@
       resumen:'Resumen de prefacturas', total:['Total prefacturas','Prefacturas filtradas'],
       entregadas:['Entregadas','Todas sus líneas en VALIDACION / ENTREGADO'],
       dentro:'Todas sus líneas ≤ {h} h laborales', fuera:'Alguna línea > {h} h laborales',
-      enProceso:['En proceso','Con líneas aún sin entregar'], sinCalculo:['Sin cálculo','Líneas sin hora recibo o surtido'],
+      enProceso:['En proceso','Con líneas aún sin entregar'], sinCalculo:['Sin cálculo','Líneas con fecha u hora por corregir'],
       promedio:'Promedio por prefactura', kpiCumpl:'% Nivel de servicio',
       chart:'Evolución semanal: prefacturas dentro / fuera de meta y tiempo promedio', chartY:'Prefacturas',
       tabla:'Prefacturas fuera de meta', unidad:'prefacturas', csv:'nivel_servicio.csv',
-      footer:'Nivel de servicio = prefacturas cuyas líneas (productos) se surtieron <b>todas</b> en ≤ meta ÷ prefacturas con cálculo. Una prefactura queda <b>fuera de meta</b> en cuanto alguna de sus líneas rebasa la meta; <b>en proceso</b> si aún le faltan líneas por entregar; <b>sin cálculo</b> si una línea entregada no tiene hora de recibo o de surtido. Su tiempo es el de su línea más tardada. ' + HORARIO
+      footer:'Nivel de servicio = prefacturas cuyas líneas (productos) se surtieron <b>todas</b> en ≤ meta ÷ prefacturas con cálculo. Una prefactura queda <b>fuera de meta</b> en cuanto alguna de sus líneas rebasa la meta; <b>en proceso</b> si aún le faltan líneas por entregar; <b>sin cálculo</b> si una línea entregada tiene una fecha u hora faltante o inválida. Su tiempo es el de su línea más tardada. ' + HORARIO
     }
   };
 
@@ -303,6 +347,8 @@
     show($('error'), false);
     CURRENT = d;
     renderLabels();
+    renderSearch(d);
+    renderAlerts(d.meta.alertas);
     if (MODULO === 'piezas' && d.meta.sinPzs) {
       $('footer').innerHTML += '<br><b>' + d.meta.sinPzs.toLocaleString('es-MX') + '</b> línea(s) sin PZS no se consideran en este módulo.';
     }
@@ -328,6 +374,47 @@
     renderTable(d.atrasos, d.atrasosTotal);
     try { renderChart(d.weekly, d.meta); }
     catch(e){ chartMsg('No se pudo dibujar la gráfica: ' + e.message); }
+  }
+
+  // ---- Alerta de fechas / horas por corregir (PF de la columna 1) ----
+  var ALERT_OPEN = false, ALERT_ITEMS = [];
+  function renderAlerts(a){
+    ALERT_ITEMS = (a && a.items) || [];
+    show($('alert-banner'), !!(a && a.n));
+    if(!a || !a.n) return;
+    $('al-title').textContent = a.n.toLocaleString('es-MX') + ' línea(s) en ' + a.prefacturas.toLocaleString('es-MX') +
+      ' prefactura(s) con fechas u horas por corregir';
+    var porTipo = {};
+    ALERT_ITEMS.forEach(function(x){ var k = x.texto.replace(/\s*\(\d+\)/, ''); porTipo[k] = (porTipo[k]||0) + 1; });
+    $('al-sub').textContent = 'No se calcularon (quedan en "Sin cálculo"); el tablero no supone ninguna fecha. Corrígelas en la hoja origen. ' +
+      Object.keys(porTipo).map(function(k){ return porTipo[k] + ' × ' + k; }).join(' · ');
+    $('al-tbl').querySelector('tbody').innerHTML = ALERT_ITEMS.map(function(x){
+      return '<tr><td><b>'+esc(x.no)+'</b></td><td class="num">'+x.fila+'</td><td>'+esc(x.cte)+'</td><td>'+esc(x.desc)+'</td>'+
+        '<td>'+esc(x.campo)+'</td><td class="val">'+esc(x.valor)+'</td><td>'+esc(x.texto)+'</td></tr>';
+    }).join('');
+    $('al-foot').textContent = 'Fila = número de fila en esta hoja' + (a.n > ALERT_ITEMS.length ? ' · se muestran ' + ALERT_ITEMS.length + ' de ' + a.n : '') + '.';
+    show($('al-body'), ALERT_OPEN);
+    $('al-toggle').textContent = ALERT_OPEN ? 'Ocultar ▴' : 'Ver PF por corregir ▾';
+  }
+  function csvCell(v){ v = String(v==null?'':v); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; }
+  function exportAlerts(){
+    var head = ['PF (Columna 1)','Fila','Cliente','Descripción','Campo','Valor capturado','Qué corregir','Recibo'];
+    var lines = [head.join(',')].concat(ALERT_ITEMS.map(function(x){
+      return [x.no,x.fila,x.cte,x.desc,x.campo,x.valor,x.texto,x.recibo].map(csvCell).join(',');
+    }));
+    var blob = new Blob(['\uFEFF'+lines.join('\r\n')], {type:'text/csv;charset=utf-8;'});
+    var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'fechas_por_corregir.csv';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  }
+
+  // Lista de coincidencias cuando hay texto en "Buscar"
+  function renderSearch(d){
+    var q = d.meta.buscar || '';
+    show($('sec-search'), !!q);
+    if(!q) return;
+    $('srch-count').textContent = '"' + q + '" — ' + d.resultadosTotal.toLocaleString('es-MX') + (MODULO==='servicio' ? ' prefactura(s)' : ' línea(s)');
+    renderRows(d.resultados, $('srch-head'), $('srch-tbl').querySelector('tbody'), $('srch-foot'),
+      'Sin coincidencias con los filtros actuales. Revisa Año, Mes, Semana, Nave y Estatus.', 500, true);
   }
 
   function renderLabels(){
@@ -491,15 +578,18 @@
   function resTag(res){ return '<span class="tag '+resCls(res)+'">'+esc(res)+'</span>'; }
 
   function renderDetail(){
-    var rows = DETAIL.rows, tb = $('m-tbl').querySelector('tbody');
+    renderRows(DETAIL.rows, $('m-head'), $('m-tbl').querySelector('tbody'), $('m-foot'), 'Sin '+(MODULO==='piezas'?'líneas':LAB[MODULO].unidad)+'.', DETAIL_MAX, true);
+  }
+
+  // Dibuja filas de desglose (líneas o prefacturas) en cualquier tabla: la ventana del desglose o los resultados de la búsqueda
+  function renderRows(rows, headEl, tb, footEl, emptyMsg, max, withHint){
     var servicio = MODULO === 'servicio';
-    $('m-head').innerHTML = servicio
+    headEl.innerHTML = servicio
       ? '<tr><th></th><th>Prefactura</th><th>Cliente</th><th>Recibo</th><th>Surtido</th><th class="num">Líneas</th><th class="num">Fuera</th><th>Semana</th><th class="num">Tiempo laboral</th><th>Resultado</th></tr>'
       : '<tr><th>Prefactura</th><th>Cliente</th><th>Descripción</th><th>Recibo</th><th>Surtido</th><th>Nave</th><th>Estatus</th><th>Semana</th><th class="num">Tiempo laboral</th><th>Resultado</th></tr>';
-    var cols = servicio ? 10 : 10;
-    if(!rows.length){ tb.innerHTML = '<tr><td colspan="'+cols+'" class="muted">Sin '+(MODULO==='piezas'?'líneas':LAB[MODULO].unidad)+'.</td></tr>'; $('m-foot').textContent=''; return; }
+    if(!rows.length){ tb.innerHTML = '<tr><td colspan="10" class="muted">'+emptyMsg+'</td></tr>'; footEl.textContent=''; return; }
 
-    var shown = rows.slice(0, DETAIL_MAX);
+    var shown = rows.slice(0, max);
     tb.innerHTML = shown.map(function(r, i){
       if(servicio){
         return '<tr class="pf" data-i="'+i+'"><td><span class="caret">▸</span></td><td>'+esc(r.no)+'</td><td>'+esc(r.cte)+'</td>'+
@@ -510,7 +600,7 @@
       return '<tr><td>'+esc(r.no)+'</td><td>'+esc(r.cte)+'</td><td>'+esc(r.desc)+(r.pzs!==''?' <span class="muted">('+esc(r.pzs)+' pzs)</span>':'')+'</td>'+
         '<td class="dt">'+esc(r.recibo)+'</td><td class="dt">'+esc(r.surtido)+'</td><td>'+esc(r.nave)+'</td>'+
         '<td>'+esc(r.estatus)+'</td><td>'+esc(r.semana)+'</td><td class="num">'+(r.min===''?'—':fmtMin(r.min))+'</td>'+
-        '<td>'+resTag(r.resultado)+'</td></tr>';
+        '<td>'+resTag(r.resultado)+(r.motivo?'<div class="muted" style="font-size:11px;margin-top:2px">'+esc(r.motivo)+'</div>':'')+'</td></tr>';
     }).join('');
 
     if(servicio){
@@ -518,16 +608,17 @@
         tr.addEventListener('click', function(){ toggleLines(tr, shown[+tr.getAttribute('data-i')]); });
       });
     }
-    var u = LAB[MODULO].unidad;
+
+    var u = LAB[MODULO].unidad, n = rows.length.toLocaleString('es-MX');
+    var txt;
     if(MODULO === 'piezas'){
       var pz = rows.reduce(function(t, r){ return t + (parseFloat(r.pzs) || 0); }, 0);
-      $('m-foot').textContent = rows.length.toLocaleString('es-MX') + ' líneas · ' + pz.toLocaleString('es-MX') + ' piezas' +
-        (rows.length > DETAIL_MAX ? ' (se muestran '+DETAIL_MAX+' líneas; exporta el CSV para ver todas).' : '.');
-      return;
+      txt = n + (rows.length === 1 ? ' línea · ' : ' líneas · ') + pz.toLocaleString('es-MX') + (pz === 1 ? ' pieza' : ' piezas');
+    } else {
+      txt = n + ' ' + (rows.length === 1 ? ({solicitudes:'solicitud', prefacturas:'prefactura'}[u] || u) : u);
     }
-    $('m-foot').textContent = (rows.length > DETAIL_MAX
-      ? 'Mostrando '+DETAIL_MAX+' de '+rows.length.toLocaleString('es-MX')+' '+u+' (exporta el CSV para ver todas).'
-      : rows.length.toLocaleString('es-MX')+' '+u+'.') + (servicio ? ' Haz clic en una prefactura para ver sus líneas.' : '');
+    if(rows.length > max) txt += ' (se muestran '+max+'; exporta el CSV para ver todas)';
+    footEl.textContent = txt + '.' + (servicio && withHint ? ' Haz clic en una prefactura para ver sus líneas.' : '');
   }
 
   // Nivel de Servicio: despliega / oculta las líneas (productos) de una prefactura
@@ -542,7 +633,7 @@
       p.lineas.map(function(l){
         return '<tr><td>'+esc(l.desc)+'</td><td class="num">'+esc(l.pzs)+'</td><td>'+esc(l.estatus)+'</td>'+
           '<td class="dt">'+esc(l.recibo)+'</td><td class="dt">'+esc(l.surtido)+'</td>'+
-          '<td class="num">'+(l.min===''?'—':fmtMin(l.min))+'</td><td>'+resTag(l.resultado)+'</td></tr>';
+          '<td class="num">'+(l.min===''?'—':fmtMin(l.min))+'</td><td>'+resTag(l.resultado)+(l.motivo?'<div class="muted" style="font-size:11px">'+esc(l.motivo)+'</div>':'')+'</td></tr>';
       }).join('') + '</tbody></table>';
     var sub = document.createElement('tr');
     sub.className = 'sub';
@@ -582,6 +673,12 @@
       MODULO = m; closeDetail(); renderLabels(); load();
     });
   });
+  $('al-toggle').addEventListener('click', function(){
+    ALERT_OPEN = !ALERT_OPEN;
+    show($('al-body'), ALERT_OPEN);
+    $('al-toggle').textContent = ALERT_OPEN ? 'Ocultar ▴' : 'Ver PF por corregir ▾';
+  });
+  $('al-csv').addEventListener('click', exportAlerts);
   $('btn-update').addEventListener('click', load);
   $('btn-csv').addEventListener('click', exportCsv);
   $('m-close').addEventListener('click', closeDetail);

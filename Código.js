@@ -205,6 +205,67 @@ function parseFecha_(cell) {
   return null;
 }
 
+// ------------------------- TIEMPO SIN SUPONER FECHAS -------------------------
+// Texto de una celda para mostrarlo en la alerta de datos.
+function valTxt_(v) {
+  if (v === '' || v == null) return '(vacía)';
+  if (v instanceof Date) return isNaN(v.getTime()) ? '(fecha inválida)' : fmt_(v);
+  return String(v).trim();
+}
+
+// Calcula el tiempo laboral de una línea SIN suponer ninguna fecha ni hora.
+// Solo se calcula si FECHA, HORA RECIBO, FECHA DE SURTIDO y HORA DE SURTIDO están completas y son
+// coherentes. Si algo falta o está mal, no se calcula y se devuelve el "problema" con el valor
+// capturado, para avisar qué se debe corregir en la hoja.
+function evalTiempo_(fechaDt, rawHRec, rawHSur, rawFSur) {
+  var r = { tiempoMin: null, cumple: null, startDT: null, endDT: null, surtidoTxt: '', problema: null };
+  var tR = parseTimeCell_(rawHRec), tS = parseTimeCell_(rawHSur);
+  if (tR) r.startDT = combineDateTime_(fechaDt, tR);
+  var horaSur = tS ? (' ' + ('0' + tS.h).slice(-2) + ':' + ('0' + tS.m).slice(-2)) : '';
+  function prob(codigo, campo, valor, texto) { r.problema = { codigo: codigo, campo: campo, valor: valor, texto: texto }; return r; }
+
+  // 1) horas
+  if (!tR || !tS) {
+    var campos = [], vals = [];
+    if (!tR) { campos.push('HORA RECIBO'); vals.push(valTxt_(rawHRec)); }
+    if (!tS) { campos.push('HORA DE SURTIDO'); vals.push(valTxt_(rawHSur)); }
+    r.surtidoTxt = tS ? valTxt_(rawFSur) + horaSur : '';
+    return prob('hora', campos.join(' y '), vals.join(' / '), 'Falta capturar la hora (o no es una hora válida)');
+  }
+
+  // 2) FECHA DE SURTIDO
+  var fSur = null;
+  if (rawFSur === '' || rawFSur == null) {
+    r.surtidoTxt = '(vacía)' + horaSur;
+    return prob('fecha_vacia', 'FECHA DE SURTIDO', '(vacía)', 'Falta capturar la FECHA DE SURTIDO');
+  }
+  if (rawFSur instanceof Date) { if (!isNaN(rawFSur.getTime())) fSur = rawFSur; }
+  else fSur = parseFecha_(rawFSur);                 // texto con formato d/m/aaaa
+  if (!fSur) {
+    r.surtidoTxt = valTxt_(rawFSur) + horaSur;
+    return prob('fecha_invalida', 'FECHA DE SURTIDO', valTxt_(rawFSur), 'La FECHA DE SURTIDO no es una fecha válida');
+  }
+  var y = fSur.getFullYear();
+  r.endDT = combineDateTime_(fSur, tS);
+  r.surtidoTxt = fmtDT_(r.endDT);
+  if (y < 2000 || y > 2100) {
+    return prob('fecha_anio', 'FECHA DE SURTIDO', valTxt_(fSur), 'La FECHA DE SURTIDO tiene un año fuera de rango (' + y + ')');
+  }
+
+  // 3) coherencia entre recibo y surtido
+  if (r.endDT < r.startDT) {
+    return prob('surtido_antes', 'FECHA / HORA DE SURTIDO', 'surtido ' + fmtDT_(r.endDT) + ' · recibo ' + fmtDT_(r.startDT),
+                'El surtido es anterior al recibo');
+  }
+  if ((r.endDT.getTime() - r.startDT.getTime()) / 86400000 > MAX_SPAN_DAYS) {
+    return prob('rango', 'FECHA DE SURTIDO', valTxt_(fSur), 'Pasan más de ' + MAX_SPAN_DAYS + ' días entre el recibo y el surtido');
+  }
+
+  r.tiempoMin = businessMinutesBetween_(r.startDT, r.endDT);
+  r.cumple = r.tiempoMin !== null ? r.tiempoMin <= SLA_MINUTES : null;
+  return r;
+}
+
 // ------------------------- LECTURA DE REGISTROS -------------------------
 // Las columnas se ubican por NOMBRE de encabezado (no por posición), así que
 // insertar/mover columnas en la hoja no rompe el tablero.
@@ -246,6 +307,7 @@ function buildRecords_() {
   }
 
   var recs = [];
+  var alertas = [];      // líneas ENTREGADAS cuya FECHA (recibo) es inválida: no entran a recs
   for (var i = 1; i < values.length; i++) {
     try {
       var row = values[i];
@@ -253,29 +315,6 @@ function buildRecords_() {
 
       // fila vacía o sin folio: se ignora
       if (!prefactura) continue;
-
-      var fechaDt = parseFecha_(row[cFec]);
-      if (!fechaDt) continue; // fecha ausente o irreconocible
-      var anio = fechaDt.getFullYear();
-      if (anio < 2000 || anio > 2100) continue; // fecha claramente corrupta
-
-      var tiempoMin = null;
-      var cumple = null;
-
-      var tRecibo = parseTimeCell_(row[cHRec]);
-      var tSurtido = parseTimeCell_(row[cHSur]);
-      var fSur = cFSur >= 0 ? parseFecha_(row[cFSur]) : null;
-
-      var startDT = tRecibo ? combineDateTime_(fechaDt, tRecibo) : null;
-      var endDT = tSurtido ? combineDateTime_(fSur || fechaDt, tSurtido) : null;
-
-      if (startDT && endDT) {
-        // sin fecha de surtido capturada: si la hora de surtido es "menor" que la de recibo, cruzó medianoche
-        if (!fSur && endDT <= startDT) endDT.setDate(endDT.getDate() + 1);
-
-        tiempoMin = businessMinutesBetween_(startDT, endDT);
-        cumple = tiempoMin !== null ? tiempoMin <= SLA_MINUTES : null;
-      }
 
       var estA = cEstA >= 0 ? row[cEstA] : '';
       var estE = cEstE >= 0 ? row[cEstE] : '';
@@ -285,13 +324,28 @@ function buildRecords_() {
       if (EXCLUIR_ESTATUS.indexOf(normalize_(estatus)) >= 0) continue;
       if (cEstR >= 0 && EXCLUIR_ESTATUS.indexOf(normalize_(row[cEstR])) >= 0) continue;
 
+      var entregado = ENTREGADO_ESTATUS.indexOf(normalize_(estatus)) >= 0;
+
+      // FECHA (recibo): sin ella la línea no se puede ubicar en ningún año / mes / semana
+      var fechaDt = parseFecha_(row[cFec]);
+      var anio = fechaDt ? fechaDt.getFullYear() : 0;
+      if (!fechaDt || anio < 2000 || anio > 2100) {
+        if (entregado) {
+          alertas.push({ no: String(prefactura), fila: i + 1, cte: (cCli >= 0 && row[cCli]) ? String(row[cCli]).trim() : '',
+            desc: (cDesc >= 0 && row[cDesc]) ? String(row[cDesc]).trim() : '', campo: 'FECHA', valor: valTxt_(row[cFec]),
+            texto: 'La FECHA (de recibo) no es válida: la línea no se puede ubicar y queda fuera del tablero', recibo: '' });
+        }
+        continue;
+      }
+
+      var ev = evalTiempo_(fechaDt, row[cHRec], row[cHSur], cFSur >= 0 ? row[cFSur] : '');
+      var tiempoMin = ev.tiempoMin, cumple = ev.cumple;
+
       var nave = cNave >= 0 ? row[cNave] : '';
       var semCell = cSem >= 0 ? row[cSem] : '';
       var semana = (semCell !== '' && semCell != null && !(semCell instanceof Date))
         ? String(semCell).trim()
         : String(isoWeek_(fechaDt));
-
-      var entregado = ENTREGADO_ESTATUS.indexOf(normalize_(estatus)) >= 0;
 
       recs.push({
         prefactura: String(prefactura),
@@ -308,11 +362,13 @@ function buildRecords_() {
         semana: semana,
         tiempoMin: tiempoMin,
         cumple: cumple,
+        fila: i + 1,
+        problema: ev.problema,
         cat: lineCat_(entregado, tiempoMin, cumple),
-        iniDt: startDT,
-        finDt: endDT,
-        recibo: startDT ? fmtDT_(startDT) : '',
-        surtido: endDT ? fmtDT_(endDT) : ''
+        iniDt: ev.startDT,
+        finDt: ev.problema ? null : ev.endDT,         // una fecha con problema no cuenta como "último surtido" de la prefactura
+        recibo: ev.startDT ? fmtDT_(ev.startDT) : '',
+        surtido: ev.surtidoTxt
       });
     } catch (rowErr) {
       // fila con datos inesperados: se omite y se sigue con las demás
@@ -321,7 +377,7 @@ function buildRecords_() {
 
   DIAG_.readMs = readMs;
   DIAG_.rows = recs.length;
-  return { recs: recs };
+  return { recs: recs, alertas: alertas };
 }
 
 // Ordena etiquetas de semana: numéricas primero (ascendente), luego texto.
@@ -572,8 +628,30 @@ function getDashboard(filters, modulo) {
     };
   });
 
+  // Alerta de fechas / horas por corregir: líneas entregadas que NO se pudieron calcular por un dato faltante o inválido.
+  // Respeta los filtros; las de FECHA (recibo) inválida no se pueden ubicar, así que siempre se listan.
+  var alertItems = filterUnits_(recs, filters).filtered
+    .filter(function (r) { return r.entregado && r.problema; })
+    .map(function (r) {
+      return { no: r.prefactura, fila: r.fila, cte: r.cliente, desc: r.descripcion,
+               campo: r.problema.campo, valor: r.problema.valor, texto: r.problema.texto, recibo: r.recibo };
+    })
+    .concat(built.alertas);
+  alertItems.sort(function (a, b) {
+    return String(a.no).localeCompare(String(b.no), 'es', { numeric: true }) || a.fila - b.fila;
+  });
+  var alertPf = {};
+  alertItems.forEach(function (a) { alertPf[a.no] = true; });
+
+  // Si hay texto en "Buscar", se devuelve la lista de coincidencias (todas, sin importar su categoría)
+  var buscarTxt = String((filters && filters.buscar) || '').trim();
+  var resultados = buscarTxt ? detalleRows_(filtered, 'total', modulo) : [];
+  var resultadosTotal = resultados.length;
+
   return {
     meta: {
+      buscar: buscarTxt,
+      alertas: { n: alertItems.length, prefacturas: Object.keys(alertPf).length, items: alertItems.slice(0, 1000) },
       title: META_TITLE,
       subtitle: META_SUBTITLE,
       modulo: modulo,
@@ -587,6 +665,8 @@ function getDashboard(filters, modulo) {
     kpis: kpis,
     weekly: weekly,
     atrasos: atrasos,
+    resultados: resultados.slice(0, 500),
+    resultadosTotal: resultadosTotal,
     atrasosTotal: fueraRows.length,
     atrasosPzs: modulo === 'piezas' ? fueraRows.reduce(function (t, r) { return t + r.pzsN; }, 0) : 0
   };
@@ -603,18 +683,12 @@ function inCategory_(u, cat) {
 
 var CAT_TEXT_ = { dentro: 'Dentro de meta', fuera: 'Fuera de meta', enProceso: 'En proceso', sinCalculo: 'Sin cálculo' };
 
-// Desglose de las unidades filtradas que pertenecen a una tarjeta.
-// Se usa al hacer clic en una tarjeta y al exportar CSV.
-//  - 'surtido': una fila por línea
+// Filas de desglose (para una tarjeta, el CSV o los resultados de la búsqueda).
+//  - 'surtido' / 'piezas': una fila por línea
 //  - 'servicio': una fila por prefactura, con sus líneas anidadas en "lineas"
-function getDetalle(filters, cat, modulo) {
-  modulo = normModulo_(modulo);
-  var built = buildRecords_();
-  if (built.error) throw new Error(built.error);
-
-  var rows = filterUnits_(unitsFor_(built.recs, modulo), filters).filtered
-    .filter(function (u) { return inCategory_(u, cat); });
-  if (cat === 'fuera') rows.sort(function (a, b) { return b.tiempoMin - a.tiempoMin; });
+function detalleRows_(units, cat, modulo) {
+  var rows = units.filter(function (u) { return inCategory_(u, cat); });
+  if (cat === 'fuera') rows = rows.slice().sort(function (a, b) { return b.tiempoMin - a.tiempoMin; });
 
   function lineRow(r) {
     return {
@@ -623,7 +697,8 @@ function getDetalle(filters, cat, modulo) {
       desc: r.descripcion, pzs: r.pzs,
       recibo: r.recibo, surtido: r.surtido,
       min: typeof r.tiempoMin === 'number' ? r.tiempoMin : '',
-      resultado: CAT_TEXT_[r.cat]
+      resultado: CAT_TEXT_[r.cat],
+      motivo: (r.problema && r.entregado) ? (r.problema.campo + ': ' + r.problema.valor) : ''
     };
   }
 
@@ -639,4 +714,13 @@ function getDetalle(filters, cat, modulo) {
     });
   }
   return rows.map(lineRow);
+}
+
+// Desglose de las unidades filtradas que pertenecen a una tarjeta.
+// Se usa al hacer clic en una tarjeta y al exportar CSV.
+function getDetalle(filters, cat, modulo) {
+  modulo = normModulo_(modulo);
+  var built = buildRecords_();
+  if (built.error) throw new Error(built.error);
+  return detalleRows_(filterUnits_(unitsFor_(built.recs, modulo), filters).filtered, cat, modulo);
 }
